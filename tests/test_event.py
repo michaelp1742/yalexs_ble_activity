@@ -5,7 +5,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from freezegun.api import FrozenDateTimeFactory
 import pytest
@@ -15,7 +15,14 @@ from pytest_homeassistant_custom_component.common import (
 )
 from pytest_homeassistant_custom_component.components.common import arm_trigger
 from pytest_homeassistant_custom_component.typing import WebSocketGenerator
-from yalexs_ble import LockCred, OpCode
+from yalexs_ble import (
+    CodeAdded,
+    CredentialAdded,
+    KeypadInfo,
+    LockCred,
+    LogRecord,
+    OpCode,
+)
 
 from custom_components.yalexs_ble_activity.const import DOMAIN, EVENT_TYPES
 from homeassistant.components.config import device_registry as config_device_registry
@@ -1061,6 +1068,49 @@ async def test_each_record_class_fires_its_kind_with_its_decoded_fields(
     await async_deliver(owner_entry, raw)
 
     assert event_attributes(hass) == {"backlog": False, **expected}
+
+
+class _LaterCodeAdded(CodeAdded):
+    """Stand in for a subclass of CodeAdded that a later version of the library adds."""
+
+
+class _LaterCredentialAdded(CredentialAdded):
+    """Stand in for a subclass of CredentialAdded that a later version of the library adds."""
+
+
+class _LaterKeypadInfo(KeypadInfo):
+    """Stand in for a subclass of KeypadInfo that a later version of the library adds."""
+
+
+@pytest.mark.parametrize(
+    ("record_class", "raw", "event_type"),
+    [
+        pytest.param(_LaterCodeAdded, CODE_ADDED_SLOT_5, "code_added", id="code"),
+        pytest.param(
+            _LaterCredentialAdded,
+            CREDENTIAL_ADDED_RF_SLOT_7,
+            "credential_added",
+            id="credential",
+        ),
+        pytest.param(_LaterKeypadInfo, KEYPAD_INFO, "keypad_info", id="other"),
+    ],
+)
+@pytest.mark.usefixtures("loaded_entry")
+async def test_a_subclass_of_a_record_class_fires_the_type_of_its_class(
+    hass: HomeAssistant,
+    owner_entry: MockConfigEntry,
+    record_class: type[LogRecord],
+    raw: bytes,
+    event_type: str,
+) -> None:
+    """A record of a subclass the library adds fires the type of the record class it derives from."""
+    with patch(
+        "custom_components.yalexs_ble_activity.event.parse_log_event_packet",
+        side_effect=record_class.decode,
+    ):
+        await async_deliver(owner_entry, raw)
+
+    assert hass.states.get(ENTITY_ID).attributes[ATTR_EVENT_TYPE] == event_type
 
 
 @pytest.mark.usefixtures("loaded_entry")

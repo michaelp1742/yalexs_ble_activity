@@ -148,6 +148,14 @@ class Activity(NamedTuple):
     credential_type: LockCred | None
 
 
+def _kind_event_type(record: LogRecord) -> str:
+    """Return the event type of the record's nearest class in _RECORD_EVENT_TYPES, else unknown_record."""
+    for record_class in type(record).__mro__:
+        if (event_type := _RECORD_EVENT_TYPES.get(record_class)) is not None:
+            return event_type
+    return EVENT_TYPE_UNKNOWN_RECORD
+
+
 def _code_activity(slot: int, credential_type: LockCred, model: LockModel) -> Activity:
     """Return master_code at the model row's master code slot, else pin with slot and credential_type."""
     if slot == model.master_code_slot:
@@ -212,17 +220,15 @@ def activity_for(record: LogRecord, model: LockModel) -> Activity:
             | CodeAddedv2(slot=slot)
             | CodeDeletedv2(slot=slot)
         ):
-            return Activity(_RECORD_EVENT_TYPES[type(record)], slot, LockCred.PIN)
+            return Activity(_kind_event_type(record), slot, LockCred.PIN)
         case (
             CredentialAdded(credential_type=LockCred() as credential_type, slot=slot)
             | CredentialDeleted(
                 credential_type=LockCred() as credential_type, slot=slot
             )
         ):
-            return Activity(_RECORD_EVENT_TYPES[type(record)], slot, credential_type)
-    return Activity(
-        _RECORD_EVENT_TYPES.get(type(record), EVENT_TYPE_UNKNOWN_RECORD), None, None
-    )
+            return Activity(_kind_event_type(record), slot, credential_type)
+    return Activity(_kind_event_type(record), None, None)
 
 
 def _attribute_value(value: Any) -> Any:

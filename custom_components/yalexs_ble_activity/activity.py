@@ -48,7 +48,6 @@ from homeassistant.util.hass_dict import HassKey
 
 from .const import (
     ATTR_BACKLOG,
-    ATTR_RAW,
     ATTR_TIMESTAMP,
     DOMAIN,
     EVENT_TYPE_ALIRO,
@@ -250,8 +249,6 @@ def attributes_for(record: LogRecord, backlog: bool) -> dict[str, Any]:
             attributes[ATTR_TIMESTAMP] = dt_util.utc_from_timestamp(value).isoformat()
         elif field.name != "raw":
             attributes[field.name] = _attribute_value(value)
-    if type(record) is LogRecord:
-        attributes[ATTR_RAW] = record.raw.hex()
     return attributes
 
 

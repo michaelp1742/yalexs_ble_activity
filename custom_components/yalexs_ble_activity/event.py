@@ -13,7 +13,13 @@ from homeassistant.helpers.start import async_at_started
 
 from . import YaleXSBLEActivityConfigEntry
 from .activity import activity_for, attributes_for, credential_name
-from .const import ATTR_NAME, CONF_LOCK_MODEL, EVENT_TYPES
+from .const import (
+    ATTR_NAME,
+    ATTR_RAW,
+    CONF_LOCK_MODEL,
+    EVENT_TYPE_UNKNOWN_RECORD,
+    EVENT_TYPES,
+)
 from .models import LOCK_MODELS, LockModel
 
 
@@ -101,5 +107,7 @@ class YaleXSBLEActivityEvent(EventEntity):
             attributes[ATTR_NAME] = credential_name(
                 self.hass, self._address, activity.credential_type, activity.slot
             )
+        if activity.event_type == EVENT_TYPE_UNKNOWN_RECORD:
+            attributes[ATTR_RAW] = raw.hex()
         self._trigger_event(activity.event_type, attributes)
         self.async_write_ha_state()

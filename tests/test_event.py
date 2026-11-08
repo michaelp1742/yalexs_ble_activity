@@ -1,10 +1,11 @@
 """Tests for the Yale Access Bluetooth Activity event entity."""
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 from unittest.mock import Mock, patch
 
 from freezegun.api import FrozenDateTimeFactory
@@ -1111,6 +1112,38 @@ async def test_a_subclass_of_a_record_class_fires_the_type_of_its_class(
         await async_deliver(owner_entry, raw)
 
     assert hass.states.get(ENTITY_ID).attributes[ATTR_EVENT_TYPE] == event_type
+
+
+@dataclass(frozen=True)
+class _LaterRecord(LogRecord):
+    """Stand in for a record class that a later version of the library adds and that has no event type here."""
+
+    value: int
+
+    @classmethod
+    def decode(cls, raw: bytes) -> Self:
+        """Build the record with byte 5 as its value."""
+        return cls(raw, raw[4], value=raw[5])
+
+
+@pytest.mark.usefixtures("loaded_entry")
+async def test_a_record_class_with_no_type_fires_unknown_record_with_its_bytes(
+    hass: HomeAssistant, owner_entry: MockConfigEntry
+) -> None:
+    """A record of a class with no event type fires unknown_record with its decoded fields and its raw bytes."""
+    with patch(
+        "custom_components.yalexs_ble_activity.event.parse_log_event_packet",
+        side_effect=_LaterRecord.decode,
+    ):
+        await async_deliver(owner_entry, NO_DECODER)
+
+    assert event_attributes(hass) == {
+        ATTR_EVENT_TYPE: "unknown_record",
+        "backlog": False,
+        "log_type": 0x11,
+        "value": 0x78,
+        "raw": NO_DECODER.hex(),
+    }
 
 
 @pytest.mark.usefixtures("loaded_entry")

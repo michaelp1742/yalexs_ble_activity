@@ -6,9 +6,10 @@ from yalexs_ble import GetLogError, PushLock, parse_log_event_packet
 
 from homeassistant.components.event import EventEntity
 from homeassistant.const import CONF_ADDRESS
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.start import async_at_started
 
 from . import YaleXSBLEActivityConfigEntry
 from .activity import activity_for, attributes_for, credential_name
@@ -52,6 +53,7 @@ class YaleXSBLEActivityEvent(EventEntity):
         self._address = address
         self._lock = lock
         self._model = model
+        self._held: list[tuple[bytes, bool]] | None = []
         self._attr_unique_id = f"{address}_activity"
         self._attr_device_info = DeviceInfo(
             connections={(CONNECTION_BLUETOOTH, lock.address)}, name=title
@@ -61,11 +63,32 @@ class YaleXSBLEActivityEvent(EventEntity):
     async def async_added_to_hass(self) -> None:
         """Register the activity log reader."""
         await super().async_added_to_hass()
+        self.async_on_remove(async_at_started(self.hass, self._async_started))
         self.async_on_remove(
             self._lock.register_log_record_callback(self._async_log_record)
         )
 
+    @callback
+    def _async_started(self, hass: HomeAssistant) -> None:
+        """Fire the records held until Home Assistant started, in the order read."""
+        held, self._held = self._held, None
+        if TYPE_CHECKING:
+            assert held is not None
+        for raw, backlog in held:
+            self._async_fire(raw, backlog)
+
     async def _async_log_record(self, raw: bytes, backlog: bool) -> None:
+        """Fire the record's event, or hold it until Home Assistant has started."""
+        if self._held is not None:
+            # The credential integrations' entries and this one load in any order, so
+            # a record read while Home Assistant starts waits until every entry loaded
+            # at the start can name it.
+            self._held.append((raw, backlog))
+            return
+        self._async_fire(raw, backlog)
+
+    @callback
+    def _async_fire(self, raw: bytes, backlog: bool) -> None:
         """Fire the record's event, and none for a GetLogError."""
         record = parse_log_event_packet(raw)
         if isinstance(record, GetLogError):

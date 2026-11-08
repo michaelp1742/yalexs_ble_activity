@@ -24,10 +24,11 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import (
     ATTR_FRIENDLY_NAME,
     CONF_ENTITY_ID,
+    EVENT_HOMEASSISTANT_STARTED,
     EVENT_STATE_CHANGED,
     Platform,
 )
-from homeassistant.core import Event, HomeAssistant
+from homeassistant.core import CoreState, Event, HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from . import (
@@ -729,6 +730,36 @@ async def test_backlog_records_fire_in_the_order_read(
     ]
     times = [datetime.fromisoformat(state.state) for state in states]
     assert times[0] < times[1] < times[2]
+
+
+async def test_records_read_at_a_start_fire_once_home_assistant_has_started(
+    hass: HomeAssistant, owner_entry: MockConfigEntry, config_entry: MockConfigEntry
+) -> None:
+    """Records read before Home Assistant has started fire once it has, in the order read and named by a platform collected meanwhile."""
+    hass.set_state(CoreState.starting)
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    events = async_capture_events(hass, EVENT_STATE_CHANGED)
+
+    await async_deliver(owner_entry, CODE_OPERATION_SLOT_1, backlog=True)
+    await async_deliver(owner_entry, AUTO_RELOCK_LOCKED, backlog=True)
+    namer = Mock(return_value="Michael")
+    await async_setup_platform(hass, "keypad", async_credential_name=namer)
+    assert _entity_changes(events) == []
+
+    hass.set_state(CoreState.running)
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done()
+
+    assert [
+        (
+            event.data["new_state"].attributes[ATTR_EVENT_TYPE],
+            event.data["new_state"].attributes.get("name"),
+            event.data["new_state"].attributes["backlog"],
+        )
+        for event in _entity_changes(events)
+    ] == [("pin", "Michael", True), ("auto_lock", None, True)]
+    namer.assert_called_once_with(hass, ADDRESS, LockCred.PIN, 1)
 
 
 async def test_a_disabled_entity_registers_no_reader(

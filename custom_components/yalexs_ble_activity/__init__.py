@@ -2,22 +2,23 @@
 
 from typing import TYPE_CHECKING
 
-from yalexs_ble import PushLock
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.start import async_at_started
 
 from .activity import async_collect_namers
 from .const import CONF_READ_ACTIVITY_LOG, DOMAIN, OWNER_DOMAIN
+from .reader import LogReader, store_for
 
 if TYPE_CHECKING:
     from homeassistant.components.yalexs_ble import YALEXSBLEConfigEntry
 
 PLATFORMS = [Platform.EVENT]
 
-type YaleXSBLEActivityConfigEntry = ConfigEntry[PushLock | None]
+type YaleXSBLEActivityConfigEntry = ConfigEntry[LogReader | None]
 
 
 @callback
@@ -41,7 +42,19 @@ async def async_setup_entry(
             translation_domain=DOMAIN, translation_key="owner_not_loaded"
         )
     await async_collect_namers(hass)
-    entry.runtime_data = owner.runtime_data.lock
+    lock = owner.runtime_data.lock
+    # The PushLock's address, which core's lock device uses, links the two devices.
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        connections={(dr.CONNECTION_BLUETOOTH, lock.address)},
+        name=entry.title,
+    )
+    reader = LogReader(hass, entry, device)
+    await reader.async_load()
+    entry.runtime_data = reader
+    entry.async_on_unload(reader.async_save)
+    entry.async_on_unload(async_at_started(hass, reader.async_started))
+    entry.async_on_unload(lock.register_log_record_callback(reader.async_log_record))
 
     reload_scheduled = False
 
@@ -70,3 +83,10 @@ async def async_unload_entry(
         # flow stores its new value before the reload that runs this unload.
         return True
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(
+    hass: HomeAssistant, entry: YaleXSBLEActivityConfigEntry
+) -> None:
+    """Remove the entry's store."""
+    await store_for(hass, entry.entry_id).async_remove()

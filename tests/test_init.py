@@ -1,5 +1,6 @@
 """Tests for the Yale Access Bluetooth Activity setup and lifecycle."""
 
+from typing import Any
 from unittest.mock import Mock
 
 from freezegun.api import FrozenDateTimeFactory
@@ -12,11 +13,12 @@ from custom_components.yalexs_ble_activity.const import (
     CONF_READ_ACTIVITY_LOG,
     DOMAIN,
 )
+from custom_components.yalexs_ble_activity.reader import LogReader
 from homeassistant.components.event import ATTR_EVENT_TYPE
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import CONF_ADDRESS, Platform
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
+from homeassistant.const import ATTR_RESTORED, CONF_ADDRESS, STATE_UNAVAILABLE, Platform
+from homeassistant.core import Event, HomeAssistant
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.integration_platform import DATA_INTEGRATION_PLATFORMS
 
 from . import (
@@ -29,7 +31,13 @@ from . import (
     async_deliver,
     async_setup_owner,
     async_setup_platform,
+    enable_entity,
+    last_data,
+    store_key,
 )
+
+# The own time of CODE_OPERATION_SLOT_1.
+CODE_OPERATION_SLOT_1_TIME = 1793077244
 
 
 def _collected_platforms(hass: HomeAssistant) -> list[str]:
@@ -40,13 +48,15 @@ def _collected_platforms(hass: HomeAssistant) -> list[str]:
     ]
 
 
-@pytest.mark.parametrize("read_activity_log", [False])
+@pytest.mark.parametrize(("read_activity_log", "stored_line"), [(False, None)])
 async def test_option_off_leaves_entry_idle(
     hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    device_registry: dr.DeviceRegistry,
     entity_registry: er.EntityRegistry,
     config_entry: MockConfigEntry,
 ) -> None:
-    """With the option off, the entry loads and runs nothing for the lock."""
+    """With the option off, the entry loads and runs nothing for the lock, and creates no device and no store."""
     assert await hass.config_entries.async_setup(config_entry.entry_id)
 
     # Core's entry does not exist yet, and setup does not need it.
@@ -70,28 +80,40 @@ async def test_option_off_leaves_entry_idle(
     assert DOMAIN not in _collected_platforms(hass)
     assert Platform.EVENT not in hass.config.components
     lock.register_log_record_callback.assert_not_called()
+    assert (
+        dr.async_entries_for_config_entry(device_registry, config_entry.entry_id) == []
+    )
     assert await hass.config_entries.async_unload(config_entry.entry_id)
+    assert store_key(config_entry) not in hass_storage
 
 
-async def test_option_on_holds_the_pushlock_of_its_lock(
-    hass: HomeAssistant, config_entry: MockConfigEntry
+async def test_option_on_registers_the_entrys_reader_on_the_pushlock_of_its_lock(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    config_entry: MockConfigEntry,
 ) -> None:
-    """With the option on, the entry holds the PushLock of its address, collects the platforms, and adds the entity."""
-    await async_setup_owner(hass, FRONT_ADDRESS, FRONT_TITLE)
+    """With the option on, the entry's reader registers on the PushLock of its address, the platforms are collected, and the entity is registered."""
+    front_entry = await async_setup_owner(hass, FRONT_ADDRESS, FRONT_TITLE)
     owner_entry = await async_setup_owner(hass)
 
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
 
     assert config_entry.state is ConfigEntryState.LOADED
-    assert config_entry.runtime_data is owner_entry.runtime_data.lock
+    assert isinstance(config_entry.runtime_data, LogReader)
+    owner_entry.runtime_data.lock.register_log_record_callback.assert_called_once_with(
+        config_entry.runtime_data.async_log_record
+    )
+    front_entry.runtime_data.lock.register_log_record_callback.assert_not_called()
     assert _collected_platforms(hass).count(DOMAIN) == 1
-    assert hass.states.get(ENTITY_ID) is not None
-    owner_entry.runtime_data.lock.register_log_record_callback.assert_called_once()
+    assert entity_registry.async_get(ENTITY_ID) is not None
 
 
 async def test_two_entries_collect_the_platforms_once(
-    hass: HomeAssistant, owner_entry: MockConfigEntry, config_entry: MockConfigEntry
+    hass: HomeAssistant,
+    owner_entry: MockConfigEntry,
+    config_entry: MockConfigEntry,
+    log_records: list[Event],
 ) -> None:
     """A second entry with the option on starts no second collection, so a platform is asked once."""
     await async_setup_owner(hass, FRONT_ADDRESS, FRONT_TITLE)
@@ -113,7 +135,7 @@ async def test_two_entries_collect_the_platforms_once(
     await async_deliver(owner_entry, CODE_OPERATION_SLOT_1)
 
     assert _collected_platforms(hass).count(DOMAIN) == 1
-    assert hass.states.get(ENTITY_ID).attributes["name"] == "Michael"
+    assert last_data(log_records)["name"] == "Michael"
     namer.assert_called_once_with(hass, ADDRESS, LockCred.PIN, 1)
 
 
@@ -132,8 +154,9 @@ async def test_core_unload_reloads_entry_until_core_loads(
     freezer: FrozenDateTimeFactory,
     owner_entry: MockConfigEntry,
     config_entry: MockConfigEntry,
+    log_records: list[Event],
 ) -> None:
-    """Core's unload reloads the entry, which retries until core's entry has loaded and then reads its new PushLock."""
+    """Core's unload reloads the entry, which retries until core's entry has loaded and then registers its reader on the new PushLock."""
     old_lock = owner_entry.runtime_data.lock
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     states: list[ConfigEntryState] = []
@@ -152,9 +175,11 @@ async def test_core_unload_reloads_entry_until_core_loads(
     assert config_entry.state is ConfigEntryState.LOADED
     new_lock = owner_entry.runtime_data.lock
     assert new_lock is not old_lock
-    new_lock.register_log_record_callback.assert_called_once()
+    new_lock.register_log_record_callback.assert_called_once_with(
+        config_entry.runtime_data.async_log_record
+    )
     await async_deliver(owner_entry, CODE_OPERATION_SLOT_1)
-    assert hass.states.get(ENTITY_ID).attributes[ATTR_EVENT_TYPE] == "pin"
+    assert last_data(log_records)[ATTR_EVENT_TYPE] == "pin"
 
 
 async def test_core_change_reaches_the_next_listener(
@@ -178,28 +203,76 @@ async def test_core_change_reaches_the_next_listener(
 
 
 async def test_core_change_reloads_entry_once(
-    hass: HomeAssistant, owner_entry: MockConfigEntry, config_entry: MockConfigEntry
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    freezer: FrozenDateTimeFactory,
+    owner_entry: MockConfigEntry,
+    config_entry: MockConfigEntry,
+    log_records: list[Event],
 ) -> None:
-    """Each reload or unload of core's entry reloads the entry once, and a reload reads the new PushLock."""
+    """Each reload or unload of core's entry reloads the entry once, and after a reload the reader is on the new PushLock and continues the serial from the store the unload wrote."""
     old_lock = owner_entry.runtime_data.lock
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     states: list[ConfigEntryState] = []
     config_entry.async_on_state_change(lambda: states.append(config_entry.state))
+    await async_deliver(owner_entry, CODE_OPERATION_SLOT_1)
 
     assert await hass.config_entries.async_reload(owner_entry.entry_id)
     await hass.async_block_till_done()
 
     assert states.count(ConfigEntryState.SETUP_IN_PROGRESS) == 1
     assert config_entry.state is ConfigEntryState.LOADED
+    assert hass_storage[store_key(config_entry)]["data"] == {
+        "earliest_time": CODE_OPERATION_SLOT_1_TIME,
+        "last_line_time": CODE_OPERATION_SLOT_1_TIME,
+        "serial": 1,
+    }
     new_lock = owner_entry.runtime_data.lock
     assert new_lock is not old_lock
     old_lock.register_log_record_callback.return_value.assert_called_once_with()
-    new_lock.register_log_record_callback.assert_called_once()
+    new_lock.register_log_record_callback.assert_called_once_with(
+        config_entry.runtime_data.async_log_record
+    )
     await async_deliver(owner_entry, CODE_OPERATION_SLOT_1)
-    assert hass.states.get(ENTITY_ID).attributes[ATTR_EVENT_TYPE] == "pin"
+    assert [event.data["serial"] for event in log_records] == [1, 2]
 
     assert await hass.config_entries.async_unload(owner_entry.entry_id)
     await hass.async_block_till_done()
 
     assert states.count(ConfigEntryState.SETUP_IN_PROGRESS) == 2
     assert config_entry.state is ConfigEntryState.SETUP_RETRY
+
+
+async def test_unloading_the_entry_removes_the_reader_and_the_entity(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    owner_entry: MockConfigEntry,
+    config_entry: MockConfigEntry,
+) -> None:
+    """The entry's unload removes the reader from the PushLock, and the entity's state becomes unavailable with restored set."""
+    enable_entity(entity_registry, config_entry)
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    register = owner_entry.runtime_data.lock.register_log_record_callback
+    register.return_value.assert_not_called()
+    assert hass.states.get(ENTITY_ID) is not None
+
+    assert await hass.config_entries.async_unload(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    register.return_value.assert_called_once_with()
+    state = hass.states.get(ENTITY_ID)
+    assert state.state == STATE_UNAVAILABLE
+    assert state.attributes[ATTR_RESTORED] is True
+
+
+async def test_removing_the_entry_removes_its_store(
+    hass: HomeAssistant, hass_storage: dict[str, Any], loaded_entry: MockConfigEntry
+) -> None:
+    """Removing the entry removes its store."""
+    assert store_key(loaded_entry) in hass_storage
+
+    await hass.config_entries.async_remove(loaded_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert store_key(loaded_entry) not in hass_storage

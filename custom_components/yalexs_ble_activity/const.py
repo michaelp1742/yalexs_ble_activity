@@ -9,10 +9,10 @@ ATTR_TIMESTAMP = "timestamp"
 ATTR_BACKLOG = "backlog"
 ATTR_NAME = "name"
 ATTR_RAW = "raw"
-ATTR_CREDENTIAL_TYPE = "credential_type"
+ATTR_SERIAL = "serial"
 ATTR_SLOT = "slot"
 
-EVENT_CREDENTIAL_ACTIVITY = "yalexs_ble_activity_credential"
+EVENT_LOG_RECORD = "yalexs_ble_activity_log_record"
 
 EVENT_TYPE_MASTER_CODE = "master_code"
 EVENT_TYPE_PIN = "pin"
@@ -119,3 +119,67 @@ EVENT_TYPES = (
     EVENT_TYPE_DIALOG_REBOOT,
     EVENT_TYPE_UNKNOWN_RECORD,
 )
+
+
+# The word of each event type, as its state name in the translations.
+EVENT_TYPE_WORDS = {
+    EVENT_TYPE_MASTER_CODE: "Master code",
+    EVENT_TYPE_PIN: "Keypad code",
+    EVENT_TYPE_RF: "RF tag",
+    EVENT_TYPE_FINGER: "Fingerprint",
+    EVENT_TYPE_FACE: "Face",
+    EVENT_TYPE_PALM: "Palm",
+    EVENT_TYPE_ALIRO: "Aliro",
+    EVENT_TYPE_CREDENTIAL: "Credential",
+    EVENT_TYPE_CREDENTIAL_ERROR: "Credential refused",
+    EVENT_TYPE_KEYPAD_BUTTON: "Keypad button",
+    EVENT_TYPE_REMOTE: "Remote",
+    EVENT_TYPE_MANUAL: "Manual",
+    EVENT_TYPE_AUTO_LOCK: "Auto lock",
+    "knock_received": "Knock received",
+    "bluetooth_received": "Bluetooth received",
+    "anomaly": "Anomaly",
+    "auto_retry": "Auto retry",
+    "over_temp": "Over temperature",
+    "burn_in": "Burn-in",
+    "home_kit": "HomeKit",
+    "z_wave": "Z-Wave",
+    "door_sense": "DoorSense",
+    "low_bat_auto_unlock": "Low battery auto unlock",
+    "escape_unlock": "Escape unlock",
+    "uwb": "UWB",
+    "external_module_operation": "External module operation",
+    "shabbat_mode": "Shabbat mode",
+    "scheduled_operation": "Scheduled operation",
+    "matter": "Matter",
+    "double_press": "Double press",
+    EVENT_TYPE_ALIRO_OPERATION: "Aliro operation",
+    "undefined": "Undefined",
+    EVENT_TYPE_LOCK_OPERATION: "Lock operation",
+    EVENT_TYPE_DOOR_OPENED: "Door opened",
+    EVENT_TYPE_DOOR_CLOSED: "Door closed",
+    EVENT_TYPE_DOOR_AJAR: "Door ajar",
+    EVENT_TYPE_DOOR_STATE_CHANGED: "Door state changed",
+    EVENT_TYPE_CODE_ADDED: "Code added",
+    EVENT_TYPE_CODE_DELETED: "Code deleted",
+    EVENT_TYPE_CODE_ADDED_V2: "Code added (v2)",
+    EVENT_TYPE_CODE_DELETED_V2: "Code deleted (v2)",
+    EVENT_TYPE_CREDENTIAL_ADDED: "Credential added",
+    EVENT_TYPE_CREDENTIAL_DELETED: "Credential deleted",
+    EVENT_TYPE_KEYPAD_OPEN: "Keypad open",
+    EVENT_TYPE_KEYPAD_WRONG_CODE: "Keypad wrong code",
+    EVENT_TYPE_KEYPAD_CLOSE: "Keypad close",
+    EVENT_TYPE_KEYPAD_INFO: "Keypad info",
+    EVENT_TYPE_ALL_CODES_DELETED: "All codes deleted",
+    EVENT_TYPE_FACTORY_RESET: "Factory reset",
+    EVENT_TYPE_TAMPER: "Tamper",
+    EVENT_TYPE_BCM_TEST: "BCM test",
+    EVENT_TYPE_HOMEKEY_OPERATION: "Home Key operation",
+    EVENT_TYPE_DPS_INFO: "DPS info",
+    EVENT_TYPE_BATTERY_INFO: "Battery info",
+    EVENT_TYPE_LOCAL_EVENT_NOTIFICATION: "Local event notification",
+    EVENT_TYPE_PRODUCT_MESSAGE: "Product message",
+    EVENT_TYPE_MATTER_MESSAGE: "Matter message",
+    EVENT_TYPE_DIALOG_REBOOT: "Dialog reboot",
+    EVENT_TYPE_UNKNOWN_RECORD: "Unknown record",
+}

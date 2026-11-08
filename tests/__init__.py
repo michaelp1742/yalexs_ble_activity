@@ -14,9 +14,9 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.yalexs_ble_activity.const import DOMAIN, OWNER_DOMAIN
-from homeassistant.components.event import ATTR_EVENT_TYPES
-from homeassistant.const import ATTR_FRIENDLY_NAME, CONF_ADDRESS
-from homeassistant.core import HomeAssistant
+from homeassistant.const import CONF_ADDRESS, Platform
+from homeassistant.core import Event, HomeAssistant
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.setup import async_setup_component
 
 ADDRESS = "AA:BB:CC:DD:EE:FF"
@@ -64,6 +64,12 @@ CREDENTIAL_TYPE_3_SLOT_2_UNLOCKED = with_checksum(
     "bb2d00000ef3f7e36a0302001337f2160200"
 )
 RF_SLOT_8_ERROR = with_checksum("bb2d00000ef3f7e36a010800f337f2160200")
+# PIN_SLOT_3_UNLOCKED with the credential type RF and slot 7, in the same second.
+RF_SLOT_7_AT_PIN_SLOT_3 = with_checksum("bb2d00000ef3f7e36a0107001337f2160200")
+# A constructed KeypadInfo (0x04) from KEYPAD_INFO, with the own time of CODE_OPERATION_SLOT_1.
+KEYPAD_INFO_AT_CODE_OPERATION_SLOT_1 = with_checksum(
+    "bb2d000004fc2fe06ac30000008000000200"
+)
 # A LockOperation (0x00) from a captured one, with the op_code at byte 5 and the
 # lock state at byte 6:
 MANUAL_UNLOCKED = with_checksum("bb2d000000010300a7eedd6a1914190f0200")
@@ -71,6 +77,13 @@ AUTO_RELOCK_SECUREMODE = with_checksum("bb2d000000050c007baddd6a2017193f0200")
 # A DoorStateChanged (0x20) from a captured one, with the door state at byte 9:
 DOOR_AJAR = with_checksum("bb2d00002054addd6a020000000000000200")
 DOOR_UNKNOWN = with_checksum("bb2d00002054addd6a000000000000000200")
+
+
+def door_opened_at(time_stamp: int) -> bytes:
+    """Return a constructed DoorStateChanged reply, door opened, with time_stamp at bytes 5 to 8."""
+    return with_checksum(
+        f"bb2d000020{time_stamp.to_bytes(4, 'little').hex()}030000000000000200"
+    )
 
 
 def lock_operation(op_code: int) -> bytes:
@@ -151,8 +164,28 @@ async def async_advance(
     await hass.async_block_till_done()
 
 
-def event_attributes(hass: HomeAssistant) -> dict[str, Any]:
-    """Return the activity entity's event type and event attributes."""
-    attributes = dict(hass.states.get(ENTITY_ID).attributes)
-    del attributes[ATTR_EVENT_TYPES], attributes[ATTR_FRIENDLY_NAME]
-    return attributes
+def last_data(events: list[Event]) -> dict[str, Any]:
+    """Return the data of the last log record event among events."""
+    return dict(events[-1].data)
+
+
+def activity_device(hass: HomeAssistant, entry: MockConfigEntry) -> dr.DeviceEntry:
+    """Return the integration's device of entry."""
+    (device,) = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
+    return device
+
+
+def store_key(entry: MockConfigEntry) -> str:
+    """Return the key of entry's store."""
+    return f"{DOMAIN}.{entry.entry_id}"
+
+
+def enable_entity(entity_registry: er.EntityRegistry, entry: MockConfigEntry) -> None:
+    """Register the activity entity of entry enabled, before its setup."""
+    entity_registry.async_get_or_create(
+        Platform.EVENT,
+        DOMAIN,
+        f"{ADDRESS}_activity",
+        suggested_object_id=ENTITY_ID.removeprefix(f"{Platform.EVENT}."),
+        config_entry=entry,
+    )

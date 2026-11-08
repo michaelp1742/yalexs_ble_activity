@@ -1,12 +1,14 @@
 """Fixtures for the Yale Access Bluetooth Activity tests."""
 
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import AsyncMock, Mock, create_autospec
 
 import pytest
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     MockModule,
+    async_capture_events,
     mock_config_flow,
     mock_integration,
     mock_platform,
@@ -17,15 +19,16 @@ from custom_components.yalexs_ble_activity.const import (
     CONF_LOCK_MODEL,
     CONF_READ_ACTIVITY_LOG,
     DOMAIN,
+    EVENT_LOG_RECORD,
     OWNER_DOMAIN,
 )
 from homeassistant.components.lock import DOMAIN as LOCK_DOMAIN
 from homeassistant.config_entries import ConfigEntry, ConfigFlow
 from homeassistant.const import CONF_ADDRESS
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
-from . import ADDRESS, TITLE, async_setup_owner
+from . import ADDRESS, TITLE, async_setup_owner, store_key
 
 
 @pytest.fixture(autouse=True)
@@ -80,10 +83,22 @@ def lock_model() -> str:
 
 
 @pytest.fixture
+def stored_line() -> dict[str, Any] | None:
+    """Return the activity entry's store at its setup, or None for nothing stored."""
+    # An earliest time of 0 puts no captured or constructed reply before the
+    # window's start.
+    return {"earliest_time": 0, "last_line_time": None, "serial": 0}
+
+
+@pytest.fixture
 def config_entry(
-    hass: HomeAssistant, read_activity_log: bool, lock_model: str
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    read_activity_log: bool,
+    lock_model: str,
+    stored_line: dict[str, Any] | None,
 ) -> MockConfigEntry:
-    """Return the activity entry for the lock, not yet set up."""
+    """Return the activity entry for the lock, not yet set up, with stored_line in its store."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         title=TITLE,
@@ -95,14 +110,22 @@ def config_entry(
         unique_id=ADDRESS,
     )
     entry.add_to_hass(hass)
+    if stored_line is not None:
+        hass_storage[store_key(entry)] = {"version": 1, "data": stored_line}
     return entry
+
+
+@pytest.fixture
+def log_records(hass: HomeAssistant) -> list[Event]:
+    """Return the log record events fired from now on."""
+    return async_capture_events(hass, EVENT_LOG_RECORD)
 
 
 @pytest.fixture
 async def loaded_entry(
     hass: HomeAssistant, owner_entry: MockConfigEntry, config_entry: MockConfigEntry
 ) -> MockConfigEntry:
-    """Return the activity entry, loaded with the option on and its entity added."""
+    """Return the activity entry, loaded with the option on."""
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
     return config_entry

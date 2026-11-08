@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from freezegun.api import FrozenDateTimeFactory
 import probatio
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -16,18 +17,18 @@ from custom_components.yalexs_ble_activity.models import LOCK_MODELS
 from homeassistant.components.event import ATTR_EVENT_TYPE
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.const import CONF_ADDRESS
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
 from . import (
     ADDRESS,
     CODE_OPERATION_SLOT_FFEE,
-    ENTITY_ID,
     FRONT_ADDRESS,
     FRONT_TITLE,
     TITLE,
     async_deliver,
     async_setup_owner,
+    last_data,
 )
 
 LOCK_MODEL_OPTIONS = [
@@ -178,17 +179,25 @@ async def test_options_flow_turns_the_option_on_and_reloads(
         CONF_LOCK_MODEL: "doorman_classic",
     }
     assert config_entry.state is ConfigEntryState.LOADED
-    assert config_entry.runtime_data is owner_entry.runtime_data.lock
+    owner_entry.runtime_data.lock.register_log_record_callback.assert_called_once_with(
+        config_entry.runtime_data.async_log_record
+    )
 
 
 async def test_options_flow_model_change_reloads_with_the_new_row(
-    hass: HomeAssistant, owner_entry: MockConfigEntry, config_entry: MockConfigEntry
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    owner_entry: MockConfigEntry,
+    config_entry: MockConfigEntry,
+    log_records: list[Event],
 ) -> None:
-    """A change of the lock model reloads the entry, whose entity then reads the new row."""
+    """A change of the lock model reloads the entry, whose reader then reads the new row."""
+    # The own time of CODE_OPERATION_SLOT_FFEE is in 2056.
+    freezer.move_to("2057-01-01T00:00:00+00:00")
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
     await async_deliver(owner_entry, CODE_OPERATION_SLOT_FFEE)
-    assert hass.states.get(ENTITY_ID).attributes[ATTR_EVENT_TYPE] == "master_code"
+    assert last_data(log_records)[ATTR_EVENT_TYPE] == "master_code"
 
     result = await hass.config_entries.options.async_init(config_entry.entry_id)
     result = await hass.config_entries.options.async_configure(
@@ -201,6 +210,6 @@ async def test_options_flow_model_change_reloads_with_the_new_row(
     assert config_entry.state is ConfigEntryState.LOADED
     owner_entry.runtime_data.lock.register_log_record_callback.return_value.assert_called_once_with()
     await async_deliver(owner_entry, CODE_OPERATION_SLOT_FFEE)
-    attributes = hass.states.get(ENTITY_ID).attributes
-    assert attributes[ATTR_EVENT_TYPE] == "pin"
-    assert attributes["slot"] == 0xFFEE
+    data = last_data(log_records)
+    assert data[ATTR_EVENT_TYPE] == "pin"
+    assert data["slot"] == 0xFFEE

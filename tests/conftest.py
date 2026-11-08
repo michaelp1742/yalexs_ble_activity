@@ -1,6 +1,7 @@
 """Fixtures for the Yale Access Bluetooth Activity tests."""
 
 from collections.abc import Iterator
+import time
 from typing import Any
 from unittest.mock import AsyncMock, Mock, create_autospec
 
@@ -38,9 +39,10 @@ def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
 
 async def _async_setup_owner_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Load core's entry with a new PushLock, as core does on every load."""
-    entry.runtime_data = Mock(
-        lock=create_autospec(PushLock, instance=True, address=entry.data[CONF_ADDRESS])
-    )
+    lock = create_autospec(PushLock, instance=True, address=entry.data[CONF_ADDRESS])
+    # The lock's clock shows Home Assistant's time, so setup writes nothing.
+    lock.get_status.side_effect = lambda status_type: int(time.time())
+    entry.runtime_data = Mock(lock=lock)
     return True
 
 

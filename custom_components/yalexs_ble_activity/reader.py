@@ -15,6 +15,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .activity import activity_for, attributes_for, credential_name
+from .clock import LockClock
 from .const import (
     ATTR_NAME,
     ATTR_RAW,
@@ -64,6 +65,7 @@ class LogReader:
         hass: HomeAssistant,
         entry: YaleXSBLEActivityConfigEntry,
         device: DeviceEntry,
+        clock: LockClock,
     ) -> None:
         """Initialize the reader of one entry's lock."""
         self._hass = hass
@@ -74,6 +76,7 @@ class LogReader:
         # row for any other lock.
         self._model = models.get(entry.options[CONF_LOCK_MODEL], models["other"])
         self.device = device
+        self._clock = clock
         self._store = store_for(hass, entry.entry_id)
         self._held: list[tuple[LogRecord, bool, float]] | None = []
         self._entity: YaleXSBLEActivityEvent | None = None
@@ -122,10 +125,12 @@ class LogReader:
             self._async_fire(record, backlog, read_time)
 
     async def async_log_record(self, raw: bytes, backlog: bool) -> None:
-        """Fire the record's log record event, or hold it until Home Assistant has started."""
+        """Fire the record's log record event, or hold it until Home Assistant has started; give a GetLogError to the clock."""
         record = parse_log_event_packet(raw)
         if isinstance(record, GetLogError):
+            self._clock.async_sample(record)
             return
+        self._clock.async_record_read()
         if self._held is not None:
             # The credential integrations' entries and this one load in any order, so
             # a record read while Home Assistant starts waits until every entry loaded

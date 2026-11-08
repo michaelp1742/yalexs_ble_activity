@@ -10,6 +10,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.start import async_at_started
 
 from .activity import async_collect_namers
+from .clock import LockClock
 from .const import CONF_READ_ACTIVITY_LOG, DOMAIN, OWNER_DOMAIN
 from .reader import LogReader, store_for
 
@@ -49,11 +50,16 @@ async def async_setup_entry(
         connections={(dr.CONNECTION_BLUETOOTH, lock.address)},
         name=entry.title,
     )
-    reader = LogReader(hass, entry, device)
+    clock = LockClock(hass, entry, lock)
+    reader = LogReader(hass, entry, device, clock)
     await reader.async_load()
     entry.runtime_data = reader
     entry.async_on_unload(reader.async_save)
     entry.async_on_unload(async_at_started(hass, reader.async_started))
+    # The Yale Home and August apps set the clock before they read the log, so the
+    # clock starts before the reader registers.
+    await clock.async_start()
+    entry.async_on_unload(clock.async_stop)
     entry.async_on_unload(lock.register_log_record_callback(reader.async_log_record))
 
     reload_scheduled = False

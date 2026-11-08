@@ -103,7 +103,7 @@
           "read_activity_log": "Publish the lock's activity"
         },
         "data_description": {
-          "read_activity_log": "Home Assistant reads each record off the lock. A record it reads never reaches the Yale Home or August app's activity feed or the cloud."
+          "read_activity_log": "Home Assistant reads each record off the lock. A record it reads never reaches the Yale Home or August app's activity feed or the cloud. Home Assistant also keeps the lock's clock in step with its own."
         }
       }
     }

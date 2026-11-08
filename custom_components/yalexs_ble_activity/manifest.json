@@ -1,0 +1,13 @@
+{
+  "domain": "yalexs_ble_activity",
+  "name": "Yale Access Bluetooth Activity",
+  "codeowners": ["@michaelp1742"],
+  "config_flow": true,
+  "dependencies": ["yalexs_ble"],
+  "documentation": "https://github.com/michaelp1742/yalexs_ble_activity",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/michaelp1742/yalexs_ble_activity/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

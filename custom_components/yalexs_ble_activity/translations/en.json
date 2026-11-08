@@ -1,0 +1,39 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "This lock already has an activity entry.",
+      "already_in_progress": "An activity entry for this lock is already being added.",
+      "no_locks": "No lock is available. A lock is listed when Yale Access Bluetooth has loaded it and it has no activity entry yet."
+    },
+    "step": {
+      "model": {
+        "data": {
+          "lock_model": "Lock model"
+        }
+      },
+      "user": {
+        "data": {
+          "address": "Lock"
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "owner_not_loaded": {
+      "message": "Yale Access Bluetooth has not loaded this lock"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "lock_model": "Lock model",
+          "read_activity_log": "Publish the lock's activity"
+        },
+        "data_description": {
+          "read_activity_log": "Home Assistant reads each record off the lock. A record it reads never reaches the Yale Home or August app's activity feed or the cloud."
+        }
+      }
+    }
+  }
+}

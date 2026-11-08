@@ -94,3 +94,13 @@ def config_entry(
     )
     entry.add_to_hass(hass)
     return entry
+
+
+@pytest.fixture
+async def loaded_entry(
+    hass: HomeAssistant, owner_entry: MockConfigEntry, config_entry: MockConfigEntry
+) -> MockConfigEntry:
+    """Return the activity entry, loaded with the option on and its entity added."""
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    return config_entry

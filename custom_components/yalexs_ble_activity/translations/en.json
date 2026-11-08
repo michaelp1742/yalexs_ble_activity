@@ -18,6 +18,78 @@
       }
     }
   },
+  "entity": {
+    "event": {
+      "activity": {
+        "name": "Activity",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "aliro": "Aliro",
+              "aliro_operation": "Aliro operation",
+              "all_codes_deleted": "All codes deleted",
+              "anomaly": "Anomaly",
+              "auto_lock": "Auto lock",
+              "auto_retry": "Auto retry",
+              "battery_info": "Battery info",
+              "bcm_test": "BCM test",
+              "bluetooth_received": "Bluetooth received",
+              "burn_in": "Burn-in",
+              "code_added": "Code added",
+              "code_added_v2": "Code added (v2)",
+              "code_deleted": "Code deleted",
+              "code_deleted_v2": "Code deleted (v2)",
+              "credential": "Credential",
+              "credential_added": "Credential added",
+              "credential_deleted": "Credential deleted",
+              "credential_error": "Credential refused",
+              "dialog_reboot": "Dialog reboot",
+              "door_ajar": "Door ajar",
+              "door_closed": "Door closed",
+              "door_opened": "Door opened",
+              "door_sense": "DoorSense",
+              "door_state_changed": "Door state changed",
+              "double_press": "Double press",
+              "dps_info": "DPS info",
+              "escape_unlock": "Escape unlock",
+              "external_module_operation": "External module operation",
+              "face": "Face",
+              "factory_reset": "Factory reset",
+              "finger": "Fingerprint",
+              "home_kit": "HomeKit",
+              "homekey_operation": "Home Key operation",
+              "keypad_button": "Keypad button",
+              "keypad_close": "Keypad close",
+              "keypad_info": "Keypad info",
+              "keypad_open": "Keypad open",
+              "keypad_wrong_code": "Keypad wrong code",
+              "knock_received": "Knock received",
+              "local_event_notification": "Local event notification",
+              "lock_operation": "Lock operation",
+              "low_bat_auto_unlock": "Low battery auto unlock",
+              "manual": "Manual",
+              "master_code": "Master code",
+              "matter": "Matter",
+              "matter_message": "Matter message",
+              "over_temp": "Over temperature",
+              "palm": "Palm",
+              "pin": "Keypad code",
+              "product_message": "Product message",
+              "remote": "Remote",
+              "rf": "RF tag",
+              "scheduled_operation": "Scheduled operation",
+              "shabbat_mode": "Shabbat mode",
+              "tamper": "Tamper",
+              "undefined": "Undefined",
+              "unknown_record": "Unknown record",
+              "uwb": "UWB",
+              "z_wave": "Z-Wave"
+            }
+          }
+        }
+      }
+    }
+  },
   "exceptions": {
     "owner_not_loaded": {
       "message": "Yale Access Bluetooth has not loaded this lock"

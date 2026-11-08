@@ -13,12 +13,22 @@ from custom_components.yalexs_ble_activity.const import (
     OWNER_DOMAIN,
 )
 from custom_components.yalexs_ble_activity.models import LOCK_MODELS
+from homeassistant.components.event import ATTR_EVENT_TYPE
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
-from . import ADDRESS, FRONT_ADDRESS, FRONT_TITLE, TITLE, async_setup_owner
+from . import (
+    ADDRESS,
+    CODE_OPERATION_SLOT_FFEE,
+    ENTITY_ID,
+    FRONT_ADDRESS,
+    FRONT_TITLE,
+    TITLE,
+    async_deliver,
+    async_setup_owner,
+)
 
 LOCK_MODEL_OPTIONS = [
     {"value": model.key, "label": model.name} for model in LOCK_MODELS
@@ -169,3 +179,28 @@ async def test_options_flow_turns_the_option_on_and_reloads(
     }
     assert config_entry.state is ConfigEntryState.LOADED
     assert config_entry.runtime_data is owner_entry.runtime_data.lock
+
+
+async def test_options_flow_model_change_reloads_with_the_new_row(
+    hass: HomeAssistant, owner_entry: MockConfigEntry, config_entry: MockConfigEntry
+) -> None:
+    """A change of the lock model reloads the entry, whose entity then reads the new row."""
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    await async_deliver(owner_entry, CODE_OPERATION_SLOT_FFEE)
+    assert hass.states.get(ENTITY_ID).attributes[ATTR_EVENT_TYPE] == "master_code"
+
+    result = await hass.config_entries.options.async_init(config_entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_READ_ACTIVITY_LOG: True, CONF_LOCK_MODEL: "doorman_classic"},
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert config_entry.state is ConfigEntryState.LOADED
+    owner_entry.runtime_data.lock.register_log_record_callback.return_value.assert_called_once_with()
+    await async_deliver(owner_entry, CODE_OPERATION_SLOT_FFEE)
+    attributes = hass.states.get(ENTITY_ID).attributes
+    assert attributes[ATTR_EVENT_TYPE] == "pin"
+    assert attributes["slot"] == 0xFFEE

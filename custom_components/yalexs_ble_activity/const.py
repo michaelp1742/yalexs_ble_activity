@@ -9,6 +9,10 @@ ATTR_TIMESTAMP = "timestamp"
 ATTR_BACKLOG = "backlog"
 ATTR_NAME = "name"
 ATTR_RAW = "raw"
+ATTR_CREDENTIAL_TYPE = "credential_type"
+ATTR_SLOT = "slot"
+
+EVENT_CREDENTIAL_ACTIVITY = "yalexs_ble_activity_credential"
 
 EVENT_TYPE_MASTER_CODE = "master_code"
 EVENT_TYPE_PIN = "pin"

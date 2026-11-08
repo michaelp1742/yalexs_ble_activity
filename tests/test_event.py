@@ -25,7 +25,11 @@ from yalexs_ble import (
     OpCode,
 )
 
-from custom_components.yalexs_ble_activity.const import DOMAIN, EVENT_TYPES
+from custom_components.yalexs_ble_activity.const import (
+    DOMAIN,
+    EVENT_CREDENTIAL_ACTIVITY,
+    EVENT_TYPES,
+)
 from homeassistant.components.config import device_registry as config_device_registry
 from homeassistant.components.event import ATTR_EVENT_TYPE, ATTR_EVENT_TYPES
 from homeassistant.config_entries import ConfigEntryState
@@ -738,6 +742,61 @@ async def test_backlog_records_fire_in_the_order_read(
     ]
     times = [datetime.fromisoformat(state.state) for state in states]
     assert times[0] < times[1] < times[2]
+
+
+@pytest.mark.usefixtures("loaded_entry")
+async def test_a_credential_record_fires_its_cause_and_is_written_under_it(
+    hass: HomeAssistant, owner_entry: MockConfigEntry, core_lock: er.RegistryEntry
+) -> None:
+    """A credential record fires the credential event naming core's lock entity and device, and the entity's state is written under that event's context."""
+    namer = Mock(return_value="Guest")
+    await async_setup_platform(hass, "keypad", async_credential_name=namer)
+    fired = async_capture_events(hass, EVENT_CREDENTIAL_ACTIVITY)
+
+    await async_deliver(owner_entry, CODE_OPERATION_SLOT_1)
+
+    (event,) = fired
+    assert event.data == {
+        "device_id": core_lock.device_id,
+        "entity_id": core_lock.entity_id,
+        "event_type": "pin",
+        "credential_type": "pin",
+        "slot": 1,
+        "name": "Guest",
+        "backlog": False,
+    }
+    assert hass.states.get(ENTITY_ID).context.id == event.context.id
+
+
+@pytest.mark.usefixtures("loaded_entry", "core_lock")
+async def test_each_record_is_written_under_a_context_of_its_own(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, owner_entry: MockConfigEntry
+) -> None:
+    """A record written a second after a credential record has a context of its own and fires no credential event."""
+    fired = async_capture_events(hass, EVENT_CREDENTIAL_ACTIVITY)
+
+    await async_deliver(owner_entry, CODE_OPERATION_SLOT_1)
+    await async_advance(hass, freezer, 1)
+    await async_deliver(owner_entry, DOOR_CLOSED)
+
+    (event,) = fired
+    state = hass.states.get(ENTITY_ID)
+    assert state.attributes[ATTR_EVENT_TYPE] == "door_closed"
+    assert state.context.id != event.context.id
+
+
+@pytest.mark.usefixtures("loaded_entry")
+async def test_a_credential_record_without_cores_lock_fires_with_no_lock(
+    hass: HomeAssistant, owner_entry: MockConfigEntry
+) -> None:
+    """With core's lock entity absent from the registry, the credential event names no lock and the entity still fires."""
+    fired = async_capture_events(hass, EVENT_CREDENTIAL_ACTIVITY)
+
+    await async_deliver(owner_entry, CODE_OPERATION_SLOT_1)
+
+    (event,) = fired
+    assert (event.data["device_id"], event.data["entity_id"]) == (None, None)
+    assert hass.states.get(ENTITY_ID).attributes[ATTR_EVENT_TYPE] == "pin"
 
 
 async def test_records_read_at_a_start_fire_once_home_assistant_has_started(

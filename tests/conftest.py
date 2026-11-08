@@ -19,9 +19,11 @@ from custom_components.yalexs_ble_activity.const import (
     DOMAIN,
     OWNER_DOMAIN,
 )
+from homeassistant.components.lock import DOMAIN as LOCK_DOMAIN
 from homeassistant.config_entries import ConfigEntry, ConfigFlow
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from . import ADDRESS, TITLE, async_setup_owner
 
@@ -104,3 +106,26 @@ async def loaded_entry(
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
     return config_entry
+
+
+@pytest.fixture
+def core_lock(
+    device_registry: dr.DeviceRegistry,
+    entity_registry: er.EntityRegistry,
+    owner_entry: MockConfigEntry,
+) -> er.RegistryEntry:
+    """Register core's lock device, named TITLE, and its main lock entity."""
+    device = device_registry.async_get_or_create(
+        config_entry_id=owner_entry.entry_id,
+        connections={(dr.CONNECTION_BLUETOOTH, ADDRESS)},
+        identifiers={(OWNER_DOMAIN, "serial")},
+        name=TITLE,
+    )
+    return entity_registry.async_get_or_create(
+        LOCK_DOMAIN,
+        OWNER_DOMAIN,
+        ADDRESS,
+        suggested_object_id="back_door_lock",
+        config_entry=owner_entry,
+        device_id=device.id,
+    )

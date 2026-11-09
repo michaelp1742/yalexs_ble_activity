@@ -113,14 +113,14 @@ async def test_a_backlog_record_before_the_last_fired_is_discarded(
     ]
     assert _discards(caplog) == [
         f"{TITLE}: discarded LockOperation at 2026-10-25T07:19:23+00:00, outside the "
-        "window from 2026-10-27T05:00:44+00:00 to 2026-11-08T12:00:05+00:00"
+        "window from 2026-10-27T05:00:44+00:00 to 2026-11-08T12:00:10+00:00"
     ]
 
 
 @pytest.mark.parametrize(
     "stored_line", [{"earliest_time": T, "last_line_time": T + 0.001, "serial": 5}]
 )
-async def test_the_window_runs_from_the_earliest_time_to_five_seconds_ahead(
+async def test_the_window_runs_from_the_earliest_time_to_ten_seconds_ahead(
     hass: HomeAssistant,
     caplog: pytest.LogCaptureFixture,
     freezer: FrozenDateTimeFactory,
@@ -128,17 +128,17 @@ async def test_the_window_runs_from_the_earliest_time_to_five_seconds_ahead(
     loaded_entry: MockConfigEntry,
     log_records: list[Event],
 ) -> None:
-    """A record at the earliest time fires after the stored line, one before it or more than 5 s ahead of now is discarded, and only a fired record takes a serial."""
+    """A record at the earliest time fires after the stored line, one before it or more than 10 s ahead of now is discarded, and only a fired record takes a serial."""
     freezer.move_to(NOW)
     caplog.set_level(logging.DEBUG, logger=LOGGER)
 
-    for own_time in (T, T + 3, T - 1, NOW_TIME + 4, NOW_TIME + 6):
+    for own_time in (T, T + 3, T - 1, NOW_TIME + 9, NOW_TIME + 11):
         await async_deliver(owner_entry, door_opened_at(own_time))
 
     assert _lines(log_records) == [
         ("door_opened", T + 0.001 + 0.001, 6),
         ("door_opened", T + 3, 7),
-        ("door_opened", NOW_TIME + 4, 8),
+        ("door_opened", NOW_TIME + 9, 8),
     ]
     assert len(_discards(caplog)) == 2
 

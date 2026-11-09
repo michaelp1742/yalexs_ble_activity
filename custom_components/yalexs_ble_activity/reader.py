@@ -37,7 +37,7 @@ STORAGE_VERSION = 1
 SAVE_DELAY = 1
 
 # A record further ahead of Home Assistant's time than this is discarded.
-AHEAD_LIMIT = 5
+AHEAD_LIMIT = 10
 # The earliest time on a lock's first read is this long before the entry's setup.
 FIRST_READ_SPAN = 86400
 # A line in the same second as the previous line is placed this long after it.

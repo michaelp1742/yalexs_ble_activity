@@ -29,7 +29,7 @@ from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import Event, HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
-from . import ADDRESS, TITLE, async_setup_owner, store_key
+from . import ADDRESS, TITLE, async_setup_owner, status_reply, store_key, times_now
 
 
 @pytest.fixture(autouse=True)
@@ -41,7 +41,8 @@ async def _async_setup_owner_entry(hass: HomeAssistant, entry: ConfigEntry) -> b
     """Load core's entry with a new PushLock, as core does on every load."""
     lock = create_autospec(PushLock, instance=True, address=entry.data[CONF_ADDRESS])
     # The lock's clock shows Home Assistant's time, so setup writes nothing.
-    lock.get_status.side_effect = lambda status_type: int(time.time())
+    lock.get_status.side_effect = lambda status_type: status_reply(int(time.time()))
+    lock.set_rtc.side_effect = lambda offset=0.0: times_now()
     entry.runtime_data = Mock(lock=lock)
     return True
 

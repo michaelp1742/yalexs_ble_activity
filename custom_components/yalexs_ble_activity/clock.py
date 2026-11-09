@@ -1,14 +1,12 @@
 """The lock's clock, kept in step with Home Assistant's."""
 
-import asyncio
 from collections.abc import Coroutine
 import logging
 import math
-import time
 from typing import TYPE_CHECKING, Any
 
 from bleak.exc import BleakError
-from yalexs_ble import GetLogError, PushLock, StatusType, YaleXSBLEError
+from yalexs_ble import ExchangeTimes, GetLogError, PushLock, StatusType, YaleXSBLEError
 
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later
@@ -31,10 +29,6 @@ STEP_LIMIT = 1.5
 # The lock's clock reads in whole seconds, truncated; a sample takes the middle of
 # the second.
 HALF_SECOND = 0.5
-# The time from a set_rtc call to the moment the lock applies it, used until a
-# write has measured one: half the 0.6 s call-to-reply time of the 2026-11-09
-# field test.
-FIRST_WRITE_DELAY = 0.3
 # With no sample for this long, the clock is read.
 QUIET_TIME = 6 * 3600
 
@@ -59,7 +53,6 @@ class LockClock:
         self._entry = entry
         self._lock = lock
         self._record_read_time: float | None = None
-        self._write_delay = FIRST_WRITE_DELAY
         self._writing = False
         self._write_reply_time: float | None = None
         self._cancel_quiet: CALLBACK_TYPE | None = None
@@ -79,9 +72,9 @@ class LockClock:
             self._cancel_quiet = None
 
     @callback
-    def async_record_read(self, read_time: float) -> None:
+    def async_record_read(self, times: ExchangeTimes) -> None:
         """Note when a record's reply arrived, so the GetLogError that ends its drain is a sample."""
-        self._record_read_time = read_time
+        self._record_read_time = times.reply_received
 
     @callback
     def async_sample(self, record: GetLogError) -> None:
@@ -147,28 +140,23 @@ class LockClock:
     async def _async_read(self) -> tuple[float, float] | None:
         """Return how many seconds the lock's clock is ahead of Home Assistant's and when the reply arrived, or None when the read fails."""
         try:
-            lock_time = await self._lock.get_status(StatusType.RTC)
+            reply = await self._lock.get_status(StatusType.RTC)
         except CLOCK_ERRORS as err:
             _LOGGER.debug("%s clock not read: %s", self._entry.title, err)
             return None
-        read_time = time.time()
-        return lock_time + HALF_SECOND - read_time, read_time
+        read_time = reply.times.reply_received
+        return reply.value + HALF_SECOND - read_time, read_time
 
     async def _async_write(self, offset: float, new_offset: int) -> None:
-        """Set the lock's clock new_offset seconds from Home Assistant's, timed so the lock applies it on a whole second, and log the offset found."""
-        applied = math.ceil(time.time() + self._write_delay)
-        await asyncio.sleep(applied - self._write_delay - time.time())
-        called = time.time()
+        """Set the lock's clock new_offset seconds from Home Assistant's, and log the offset found."""
         try:
-            await self._lock.set_rtc(applied + new_offset)
+            times = await self._lock.set_rtc(new_offset)
         except CLOCK_ERRORS as err:
             _LOGGER.debug("%s clock not set: %s", self._entry.title, err)
             return
         finally:
             self._writing = False
-        self._write_reply_time = time.time()
-        # The lock applies the value about half the call-to-reply time after the call.
-        self._write_delay = (self._write_reply_time - called) / 2
+        self._write_reply_time = times.reply_received
         found = f"{abs(offset):.1f} s {'ahead' if offset > 0 else 'behind'}"
         if new_offset == 0:
             _LOGGER.info(

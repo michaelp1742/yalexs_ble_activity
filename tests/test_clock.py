@@ -3,13 +3,12 @@
 import asyncio
 from datetime import UTC, datetime
 import logging
-import time
 from unittest.mock import call
 
 from freezegun.api import FrozenDateTimeFactory
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-from yalexs_ble import StatusType
+from yalexs_ble import ExchangeTimes, StatusType
 
 from custom_components.yalexs_ble_activity.const import DOMAIN
 from homeassistant.core import Event, HomeAssistant
@@ -20,6 +19,8 @@ from . import (
     TITLE,
     async_advance,
     async_deliver,
+    status_reply,
+    times_now,
     with_checksum,
 )
 
@@ -69,7 +70,7 @@ async def _async_drain(
     [
         pytest.param(
             -12,
-            [call(NOW_TIME + 1)],
+            [call(0)],
             [f"{TITLE} clock 11.5 s behind; set to Home Assistant's time"],
             id="12_s_behind",
         ),
@@ -88,22 +89,11 @@ async def test_setup_sets_a_clock_more_than_10_s_off_before_the_reader(
 ) -> None:
     """Setup reads the lock's clock and sets it to Home Assistant's time before it registers the reader, only when it is more than 10 s off."""
     lock = owner_entry.runtime_data.lock
-    read = asyncio.Event()
-
-    async def _async_get_status(status_type: StatusType) -> int:
-        read.set()
-        return NOW_TIME + lock_offset
-
-    lock.get_status.side_effect = _async_get_status
-
-    setup = hass.async_create_task(
-        hass.config_entries.async_setup(config_entry.entry_id)
+    lock.get_status.side_effect = lambda status_type: status_reply(
+        NOW_TIME + lock_offset
     )
-    # Setup goes on from the read to the write's wait without yielding.
-    await read.wait()
-    await async_advance(hass, freezer, 1)
 
-    assert await setup
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
     assert lock.get_status.call_args_list == [call(StatusType.RTC)]
     assert lock.set_rtc.call_args_list == writes
     assert [name for name, _, _ in lock.mock_calls] == [
@@ -119,25 +109,25 @@ async def test_setup_sets_a_clock_more_than_10_s_off_before_the_reader(
     [
         pytest.param(
             NOW_TIME + 3,
-            NOW_TIME + 2 + 2,
+            2,
             f"{TITLE} clock 2.8 s ahead; moved 1 s toward Home Assistant's time",
             id="2.8_s_ahead",
         ),
         pytest.param(
             NOW_TIME + 2,
-            NOW_TIME + 2 + 1,
+            1,
             f"{TITLE} clock 1.8 s ahead; moved 1 s toward Home Assistant's time",
             id="1.8_s_ahead",
         ),
         pytest.param(
             NOW_TIME - 2,
-            NOW_TIME + 2 - 1,
+            -1,
             f"{TITLE} clock 2.2 s behind; moved 1 s toward Home Assistant's time",
             id="2.2_s_behind",
         ),
         pytest.param(
             NOW_TIME + 16,
-            NOW_TIME + 2,
+            0,
             f"{TITLE} clock 15.8 s ahead; set to Home Assistant's time",
             id="15.8_s_ahead",
         ),
@@ -150,15 +140,16 @@ async def test_a_sample_off_by_1_5_s_or_more_corrects_the_clock_in_a_task(
     freezer: FrozenDateTimeFactory,
     owner_entry: MockConfigEntry,
     cleared_time: int,
-    write: int,
+    write: float,
     info: str,
 ) -> None:
     """The sample pairs dirty_bit_cleared_time plus 0.5 s with the last record's reply, and a clock 1.5 to 10 s off moves 1 s toward Home Assistant's time and one more than 10 s off is set to it, in a task the reader does not await."""
     lock = owner_entry.runtime_data.lock
     release = asyncio.Event()
 
-    async def _async_set_rtc(seconds: int) -> None:
+    async def _async_set_rtc(offset: float) -> ExchangeTimes:
         await release.wait()
+        return times_now()
 
     lock.set_rtc.side_effect = _async_set_rtc
 
@@ -192,7 +183,7 @@ async def test_no_write_for_a_clock_under_1_5_s_off_or_a_drain_that_read_nothing
 
     lock.set_rtc.assert_not_called()
     await _async_drain(hass, freezer, owner_entry, NOW_TIME + 18)
-    lock.set_rtc.assert_called_once_with(NOW_TIME + 4)
+    lock.set_rtc.assert_called_once_with(0)
 
 
 @pytest.mark.usefixtures("loaded_entry")
@@ -203,8 +194,9 @@ async def test_a_read_before_the_last_writes_reply_is_no_sample(
     lock = owner_entry.runtime_data.lock
     release = asyncio.Event()
 
-    async def _async_set_rtc(seconds: int) -> None:
+    async def _async_set_rtc(offset: float) -> ExchangeTimes:
         await release.wait()
+        return times_now()
 
     lock.set_rtc.side_effect = _async_set_rtc
 
@@ -223,45 +215,10 @@ async def test_a_read_before_the_last_writes_reply_is_no_sample(
     await async_deliver(owner_entry, CODE_OPERATION_SLOT_1)
     await async_deliver(owner_entry, end_of_log_at(NOW_TIME + 3))
     await async_advance(hass, freezer, 1)
-    assert lock.set_rtc.call_args_list == [call(NOW_TIME + 2 + 2)]
+    assert lock.set_rtc.call_args_list == [call(2)]
 
     await _async_drain(hass, freezer, owner_entry, NOW_TIME + 7)
-    assert lock.set_rtc.call_args_list == [
-        call(NOW_TIME + 2 + 2),
-        call(NOW_TIME + 5 + 2),
-    ]
-
-
-@pytest.mark.usefixtures("loaded_entry")
-async def test_a_write_is_timed_for_the_lock_to_apply_it_on_a_whole_second(
-    hass: HomeAssistant, freezer: FrozenDateTimeFactory, owner_entry: MockConfigEntry
-) -> None:
-    """The first write is called 0.3 s before the next whole second with that second, and a later one half the previous write's call-to-reply time before it."""
-    lock = owner_entry.runtime_data.lock
-    calls: list[tuple[int, float]] = []
-
-    async def _async_set_rtc(seconds: int) -> None:
-        calls.append((seconds, time.time()))
-        await asyncio.sleep(1)
-
-    lock.set_rtc.side_effect = _async_set_rtc
-
-    await async_advance(hass, freezer, 0.2)
-    await async_deliver(owner_entry, CODE_OPERATION_SLOT_1)
-    await async_deliver(owner_entry, end_of_log_at(NOW_TIME + 16))
-    await async_advance(hass, freezer, 0.5)
-    await async_advance(hass, freezer, 1)
-    await async_advance(hass, freezer, 3.5)
-    await async_deliver(owner_entry, CODE_OPERATION_SLOT_1)
-    await async_deliver(owner_entry, end_of_log_at(NOW_TIME + 21))
-    await async_advance(hass, freezer, 0.3)
-    await async_advance(hass, freezer, 1)
-
-    assert [seconds for seconds, _ in calls] == [NOW_TIME + 1, NOW_TIME + 6]
-    assert [called - NOW_TIME for _, called in calls] == [
-        pytest.approx(0.7),
-        pytest.approx(5.5),
-    ]
+    assert lock.set_rtc.call_args_list == [call(2), call(2)]
 
 
 @pytest.mark.usefixtures("loaded_entry")
@@ -276,12 +233,12 @@ async def test_a_quiet_lock_is_read_6_h_after_the_last_sample(
 
     await async_advance(hass, freezer, SIX_HOURS - 2)
     assert lock.get_status.call_count == 1
-    lock.get_status.side_effect = lambda status_type: quiet_time + 2
+    lock.get_status.side_effect = lambda status_type: status_reply(quiet_time + 2)
     await async_advance(hass, freezer, 1)
     await async_advance(hass, freezer, 1)
 
     assert lock.get_status.call_args_list == [call(StatusType.RTC)] * 2
-    lock.set_rtc.assert_called_once_with(quiet_time + 1 + 2)
+    lock.set_rtc.assert_called_once_with(2)
     await async_advance(hass, freezer, SIX_HOURS)
     assert lock.get_status.call_count == 3
 
@@ -311,7 +268,7 @@ async def test_a_failed_read_or_write_logs_at_debug_and_the_records_still_fire(
         f"{TITLE} clock not set: lock did not answer set_rtc",
     ]
     assert [event.data["serial"] for event in log_records] == [1, 2]
-    assert lock.set_rtc.call_args_list == [call(NOW_TIME + 1), call(NOW_TIME + 2)]
+    assert lock.set_rtc.call_args_list == [call(0), call(0)]
     assert _lines(caplog, logging.INFO) == [
         f"{TITLE} clock 15.5 s ahead; set to Home Assistant's time"
     ]
@@ -359,4 +316,4 @@ async def test_a_get_log_error_with_the_dirty_bit_set_is_no_sample(
     await async_deliver(owner_entry, end_of_log_at(NOW_TIME + 3))
     await async_advance(hass, freezer, 1)
 
-    lock.set_rtc.assert_called_once_with(NOW_TIME + 1 + 3)
+    lock.set_rtc.assert_called_once_with(3)

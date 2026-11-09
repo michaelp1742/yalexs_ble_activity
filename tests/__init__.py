@@ -1,6 +1,7 @@
 """Tests for the Yale Access Bluetooth Activity integration."""
 
 from datetime import timedelta
+import time
 from typing import Any
 from unittest.mock import Mock
 
@@ -12,6 +13,7 @@ from pytest_homeassistant_custom_component.common import (
     mock_integration,
     mock_platform,
 )
+from yalexs_ble import ExchangeTimes, LogRead, StatusReply
 
 from custom_components.yalexs_ble_activity.const import DOMAIN, OWNER_DOMAIN
 from homeassistant.const import CONF_ADDRESS, Platform
@@ -147,12 +149,27 @@ async def async_setup_platform(
     await hass.async_block_till_done()
 
 
+def times_now(round_trip: float = 0.0) -> ExchangeTimes:
+    """Return the times of an exchange whose reply arrives now, round_trip seconds after its request."""
+    now = time.time()
+    return ExchangeTimes(now - round_trip, now)
+
+
+def status_reply(value: int, round_trip: float = 0.0) -> StatusReply:
+    """Return a status read of value whose reply arrives now."""
+    return StatusReply(value, times_now(round_trip))
+
+
 async def async_deliver(
-    owner: MockConfigEntry, raw: bytes, *, backlog: bool = False
+    owner: MockConfigEntry,
+    raw: bytes,
+    *,
+    backlog: bool = False,
+    round_trip: float = 0.0,
 ) -> None:
-    """Hand a GetLog reply to the registered reader, as the library's drain does."""
+    """Hand a GetLog reply arriving now to the registered reader, as the library's drain does."""
     reader = owner.runtime_data.lock.register_log_record_callback.call_args.args[0]
-    await reader(raw, backlog)
+    await reader(LogRead(raw, backlog, times_now(round_trip)))
 
 
 async def async_advance(

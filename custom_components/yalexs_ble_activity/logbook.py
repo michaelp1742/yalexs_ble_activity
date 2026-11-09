@@ -19,6 +19,7 @@ from .const import (
     EVENT_TYPE_CODE_DELETED_V2,
     EVENT_TYPE_CREDENTIAL_ADDED,
     EVENT_TYPE_CREDENTIAL_DELETED,
+    EVENT_TYPE_MASTER_CODE,
     EVENT_TYPE_WORDS,
 )
 
@@ -36,12 +37,9 @@ ADD_OR_DELETE_EVENT_TYPES = frozenset(
 )
 
 
-def _word(event_type: str) -> str:
-    """Return the event type's word with its first letter in lower case, unless its first word is an initialism."""
-    word = EVENT_TYPE_WORDS.get(event_type, event_type)
-    if word.split()[0].isupper():
-        return word
-    return word[0].lower() + word[1:]
+def _slot_text(slot: int) -> str:
+    """Return the slot in decimal, or in hex above 0xFF."""
+    return f"0x{slot:X}" if slot > 0xFF else str(slot)
 
 
 @callback
@@ -59,12 +57,15 @@ def async_describe_events(
         device = device_registry.async_get(data[ATTR_DEVICE_ID])
         device_name = (device.name_by_user or device.name) if device else None
         event_type = data[ATTR_EVENT_TYPE]
-        message = _word(event_type)
+        message = EVENT_TYPE_WORDS.get(event_type, event_type)
         if (name := data.get(ATTR_NAME)) is not None:
             preposition = "for" if event_type in ADD_OR_DELETE_EVENT_TYPES else "by"
             message = f"{message} {preposition} {name}"
-        if (slot := data.get(ATTR_SLOT)) is not None:
-            message = f"{message} at slot {slot}"
+        # The master code's slot is the lock model's, not a user's.
+        if (
+            slot := data.get(ATTR_SLOT)
+        ) is not None and event_type != EVENT_TYPE_MASTER_CODE:
+            message = f"{message} at slot {_slot_text(slot)}"
         return {
             LOGBOOK_ENTRY_NAME: device_name or DEFAULT_NAME,
             LOGBOOK_ENTRY_MESSAGE: message,

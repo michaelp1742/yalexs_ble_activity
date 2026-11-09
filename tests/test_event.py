@@ -1157,7 +1157,7 @@ def test_event_types_lists_each_type_once_in_the_table_order() -> None:
 
 
 def test_translations_name_each_event_type_and_no_other() -> None:
-    """The translations hold a state name for each event type and for no other, each the type's word in EVENT_TYPE_WORDS."""
+    """The translations hold a state name for each event type and for no other, and each type's logbook words equal its state name, less any " (v2)" suffix, but for the first letter's case."""
     translations = json.loads(
         (
             Path(__file__).parents[1]
@@ -1172,4 +1172,11 @@ def test_translations_name_each_event_type_and_no_other() -> None:
     assert activity["name"] == "Activity"
     words = activity["state_attributes"]["event_type"]["state"]
     assert words.keys() == set(EVENT_TYPES)
-    assert words == EVENT_TYPE_WORDS
+    assert EVENT_TYPE_WORDS.keys() == words.keys()
+    assert {
+        event_type: word[0].upper() + word[1:]
+        for event_type, word in EVENT_TYPE_WORDS.items()
+    } == {
+        event_type: state_name.removesuffix(" (v2)")
+        for event_type, state_name in words.items()
+    }

@@ -51,7 +51,7 @@ def _describer(hass: HomeAssistant) -> Callable[[Event], dict[str, Any]]:
         ),
         pytest.param(
             {"event_type": "code_added_v2", "slot": 4, "name": "Guest"},
-            "code added (v2) for Guest at slot 4",
+            "code added for Guest at slot 4",
             id="named_add",
         ),
         pytest.param(
@@ -66,9 +66,16 @@ def _describer(hass: HomeAssistant) -> Callable[[Event], dict[str, Any]]:
         ),
         pytest.param(
             {"event_type": "master_code", "slot": 0xFFEE},
-            "master code at slot 65518",
+            "master code",
             id="master_code",
         ),
+        pytest.param(
+            {"event_type": "code_added_v2", "slot": 0xFFEE, "name": None},
+            "code added at slot 0xFFEE",
+            id="slot_in_hex",
+        ),
+        pytest.param({"event_type": "home_kit"}, "HomeKit", id="proper_name"),
+        pytest.param({"event_type": "z_wave"}, "Z-Wave", id="proper_name_hyphen"),
     ],
 )
 async def test_the_logbook_describes_a_log_record_by_its_word_name_and_slot(

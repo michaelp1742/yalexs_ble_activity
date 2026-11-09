@@ -88,7 +88,7 @@ line per record, in the order the lock wrote them:
 - "Front Door keypad info", "Front Door door opened", "Front Door auto lock", and so on for every other record.
 
 The line is the device's name, the type's words, the name where one is known, and the slot where the record has one,
-but for the master code, whose slot is the model's. A slot above 255 is written in hexadecimal: a code added at the
+but for the master code, whose slot is the model's. A slot above `0xFF` is written in hexadecimal: a code added at the
 master code slot reads "code added at slot 0xFFEE".
 
 Each line is placed at the record's own time, the lock's clock when it wrote the record, not the time Home Assistant
@@ -227,23 +227,34 @@ keeps it across a restart. It changes only when the keypad is used.
 ## The lock's clock
 
 A line's time is only as right as the lock's clock, so with the option on Home Assistant keeps the lock's clock in step
-with its own:
+with its own and never moves it past its own time.
 
-- At the entry's setup, before its first read of the log, it reads the lock's clock with a clock read and, when it
-  is more than 10 seconds off, sets it to Home Assistant's time.
-- When a read of the log takes the last unread record, the lock's next answer, the one that says the log is empty
-  (a `GetLogError`, `0x80`), holds the lock's time at that read. Home Assistant compares it with its own time when
-  that record's reply arrived. When a read finds the log already empty, that answer repeats the previous one's time,
-  so it is not compared. More than 10 seconds off, Home Assistant sets the clock to its own time; 1.5 seconds or
-  more off, it moves the clock 1 second toward its own time, so the clock comes back slowly and a line's time moves
-  at most 1 second at a step.
-- A lock with no such comparison for 6 hours has its clock read with a clock read, not from the log, and that
-  reading is compared with Home Assistant's time when the reply arrived and corrected the same way.
+The lock's clock counts whole seconds and does not say when, between Home Assistant's request and its reply, it read
+them. A reading therefore bounds how far the lock's clock is from Home Assistant's to a window a little over a second
+wide: above the lock's second less the time the reply arrived, and at or below the next second less the time the
+request was written. Home Assistant takes a reading from:
 
-The lock's clock counts whole seconds, so each comparison takes the middle of the lock's second, and a clock less than
-1 second off is never moved. Each write is timed so that the lock applies it on a whole second of Home Assistant's
-time. Each write logs one info line, such as "Front Door clock 2.8 s ahead; moved 1 s toward Home Assistant's time". A
-read or write that fails logs a debug line, and the next comparison goes ahead as usual.
+- a clock read, at the entry's setup before its first read of the log, and for a lock with no other reading for 6
+  hours;
+- the lock's answer that says the log is empty (a `GetLogError`, `0x80`), when the read before it took the last unread
+  record. That answer holds the lock's time at that read, and is paired with that record's request and reply. When a
+  read finds the log already empty, the answer repeats the previous one's time, so it is no reading.
+
+A reading whose reply came more than `MAX_SAMPLE_ROUND_TRIP` after its request is not used. Between writes, Home
+Assistant keeps the part of the window common to every reading, so the estimate narrows below a second as readings fall
+at other points of the lock's second. A reading outside the estimate starts it again and logs a debug line.
+
+Home Assistant writes the clock only when the whole estimate lies on one side of its own time:
+
+- More than 10 seconds off, at setup or at any later reading, it sets the clock: to its own time for a lock behind, and
+  `MAX_SAMPLE_ROUND_TRIP` ahead of it for a lock ahead, since a write lands up to its round trip late.
+- Otherwise, at a later reading, it moves the clock up to 1 second toward its own time, when the estimate after the
+  move stays on the lock's side. A lock behind ends within 1 second of Home Assistant's time, and a lock ahead within
+  1 second plus `MAX_SAMPLE_ROUND_TRIP`.
+
+The `yalexs-ble` library sends each write at the moment that gives its second's fraction, and the estimate starts again
+from the write. Each write logs one info line, such as "Front Door clock 2.6 to 1.3 s behind; moved up to 1 s toward
+Home Assistant's time". A read or write that fails logs a debug line, and the next reading goes ahead as usual.
 
 ## Limits
 
@@ -255,9 +266,9 @@ read or write that fails logs a debug line, and the next comparison goes ahead a
   the time it holds: on the locks tested, the record of a lock change or of a keypad code was read 0.5 to 2 seconds
   after the lock reported the change, and a record that waited for a read shows later.
 - A lock clock set back drops the records written in the step's span, since they are earlier than the last record
-  placed. A lock whose clock is more than 10 seconds ahead has its clock set to Home Assistant's time at the entry's
-  setup, or at the next read that emptied the log; a record read before then is discarded when its own time is more
-  than 10 seconds ahead of Home Assistant's time at the read.
+  placed. A lock whose clock is more than 10 seconds ahead has its clock set to just ahead of Home Assistant's time at
+  the entry's setup, or at the next reading; a record read before then is discarded when its own time is more than 10
+  seconds ahead of Home Assistant's time at the read.
 - Another integration reading the same lock, such as Yale Access Bluetooth Battery, shares the reads: a record it read
   before this entry registered fires nothing here.
 - A record the app read first fires nothing.

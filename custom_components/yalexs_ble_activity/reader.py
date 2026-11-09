@@ -126,18 +126,19 @@ class LogReader:
 
     async def async_log_record(self, raw: bytes, backlog: bool) -> None:
         """Fire the record's log record event, or hold it until Home Assistant has started; give a GetLogError to the clock."""
+        read_time = time.time()
         record = parse_log_event_packet(raw)
         if isinstance(record, GetLogError):
             self._clock.async_sample(record)
             return
-        self._clock.async_record_read()
+        self._clock.async_record_read(read_time)
         if self._held is not None:
             # The credential integrations' entries and this one load in any order, so
             # a record read while Home Assistant starts waits until every entry loaded
             # at the start can name it.
-            self._held.append((record, backlog, time.time()))
+            self._held.append((record, backlog, read_time))
             return
-        self._async_fire(record, backlog, time.time())
+        self._async_fire(record, backlog, read_time)
 
     @callback
     def _async_line_time(self, record: LogRecord, read_time: float) -> float | None:

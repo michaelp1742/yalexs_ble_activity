@@ -1,7 +1,9 @@
 """The lock's clock, kept in step with Home Assistant's."""
 
+import asyncio
 from collections.abc import Coroutine
 import logging
+import math
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -23,10 +25,24 @@ CLOCK_ERRORS = (TimeoutError, RuntimeError, YaleXSBLEError, BleakError)
 # A clock found more than this many seconds off is set to Home Assistant's time.
 SET_LIMIT = 10
 # A sample at least this many seconds off moves the clock one second toward
-# Home Assistant's time.
-STEP_LIMIT = 2
+# Home Assistant's time. A sample is within 0.5 s of the lock's offset, so a clock
+# less than 1 s off is never moved.
+STEP_LIMIT = 1.5
+# The lock's clock reads in whole seconds, truncated; a sample takes the middle of
+# the second.
+HALF_SECOND = 0.5
+# The time from a set_rtc call to the moment the lock applies it, used until a
+# write has measured one: half the 0.6 s call-to-reply time of the 2026-11-09
+# field test.
+FIRST_WRITE_DELAY = 0.3
 # With no sample for this long, the clock is read.
 QUIET_TIME = 6 * 3600
+
+
+def _toward_zero(offset: float) -> int:
+    """Return the offset rounded to the whole second, one second nearer zero."""
+    seconds = math.floor(abs(offset) + 0.5) - 1
+    return seconds if offset > 0 else -seconds
 
 
 class LockClock:
@@ -42,14 +58,17 @@ class LockClock:
         self._hass = hass
         self._entry = entry
         self._lock = lock
-        self._record_read = False
+        self._record_read_time: float | None = None
+        self._write_delay = FIRST_WRITE_DELAY
+        self._writing = False
+        self._write_reply_time: float | None = None
         self._cancel_quiet: CALLBACK_TYPE | None = None
 
     async def async_start(self) -> None:
         """Read the lock's clock and set it to Home Assistant's time when it is more than SET_LIMIT off."""
-        offset = await self._async_read()
-        if offset is not None and abs(offset) > SET_LIMIT:
-            await self._async_write(offset, 0)
+        if (read := await self._async_read()) is not None and abs(read[0]) > SET_LIMIT:
+            self._writing = True
+            await self._async_write(read[0], 0)
         self._async_wait_quiet()
 
     @callback
@@ -60,9 +79,9 @@ class LockClock:
             self._cancel_quiet = None
 
     @callback
-    def async_record_read(self) -> None:
-        """Note a record read, so the GetLogError that ends its drain is a sample."""
-        self._record_read = True
+    def async_record_read(self, read_time: float) -> None:
+        """Note when a record's reply arrived, so the GetLogError that ends its drain is a sample."""
+        self._record_read_time = read_time
 
     @callback
     def async_sample(self, record: GetLogError) -> None:
@@ -71,23 +90,35 @@ class LockClock:
             # A GetLogError with the dirty bit set answers a GetLog that raced a
             # record's write, and the drain reads on.
             return
-        if not self._record_read:
-            # After a drain that read nothing, dirty_bit_cleared_time may hold the
-            # time of an earlier read.
+        if (read_time := self._record_read_time) is None:
+            # After a drain that read nothing, the lock repeats the previous
+            # GetLogError's times, those of an earlier read.
             return
-        self._record_read = False
-        self._async_correct(record.dirty_bit_cleared_time - int(time.time()))
+        self._record_read_time = None
+        # dirty_bit_cleared_time is the lock's time at the read that emptied the log,
+        # the drain's last record.
+        self._async_correct(
+            record.dirty_bit_cleared_time + HALF_SECOND - read_time, read_time
+        )
 
     @callback
-    def _async_correct(self, offset: int) -> None:
-        """Correct the lock's clock for a sample offset seconds off, as a task."""
+    def _async_correct(self, offset: float, read_time: float) -> bool:
+        """Correct the lock's clock for a sample offset seconds off, read at read_time, as a task; return False when the read is no sample."""
+        if self._writing or (
+            self._write_reply_time is not None and read_time < self._write_reply_time
+        ):
+            # The write sets the clock after the read sampled it.
+            return False
         self._async_wait_quiet()
         if abs(offset) > SET_LIMIT:
-            self._async_create_task(self._async_write(offset, 0))
+            new_offset = 0
         elif abs(offset) >= STEP_LIMIT:
-            self._async_create_task(
-                self._async_write(offset, offset - (1 if offset > 0 else -1))
-            )
+            new_offset = _toward_zero(offset)
+        else:
+            return True
+        self._writing = True
+        self._async_create_task(self._async_write(offset, new_offset))
+        return True
 
     @callback
     def _async_wait_quiet(self) -> None:
@@ -103,9 +134,7 @@ class LockClock:
 
     async def _async_read_sample(self) -> None:
         """Read the lock's clock and correct it."""
-        if (offset := await self._async_read()) is not None:
-            self._async_correct(offset)
-        else:
+        if (read := await self._async_read()) is None or not self._async_correct(*read):
             self._async_wait_quiet()
 
     @callback
@@ -115,23 +144,32 @@ class LockClock:
             self._hass, target, f"{self._entry.title} clock"
         )
 
-    async def _async_read(self) -> int | None:
-        """Return how many seconds the lock's clock is ahead of Home Assistant's, or None when the read fails."""
+    async def _async_read(self) -> tuple[float, float] | None:
+        """Return how many seconds the lock's clock is ahead of Home Assistant's and when the reply arrived, or None when the read fails."""
         try:
             lock_time = await self._lock.get_status(StatusType.RTC)
         except CLOCK_ERRORS as err:
             _LOGGER.debug("%s clock not read: %s", self._entry.title, err)
             return None
-        return lock_time - int(time.time())
+        read_time = time.time()
+        return lock_time + HALF_SECOND - read_time, read_time
 
-    async def _async_write(self, offset: int, new_offset: int) -> None:
-        """Set the lock's clock new_offset seconds from Home Assistant's, for a lock offset seconds off."""
+    async def _async_write(self, offset: float, new_offset: int) -> None:
+        """Set the lock's clock new_offset seconds from Home Assistant's, timed so the lock applies it on a whole second, and log the offset found."""
+        applied = math.ceil(time.time() + self._write_delay)
+        await asyncio.sleep(applied - self._write_delay - time.time())
+        called = time.time()
         try:
-            await self._lock.set_rtc(int(time.time()) + new_offset)
+            await self._lock.set_rtc(applied + new_offset)
         except CLOCK_ERRORS as err:
             _LOGGER.debug("%s clock not set: %s", self._entry.title, err)
             return
-        found = f"{abs(offset)} s {'ahead' if offset > 0 else 'behind'}"
+        finally:
+            self._writing = False
+        self._write_reply_time = time.time()
+        # The lock applies the value about half the call-to-reply time after the call.
+        self._write_delay = (self._write_reply_time - called) / 2
+        found = f"{abs(offset):.1f} s {'ahead' if offset > 0 else 'behind'}"
         if new_offset == 0:
             _LOGGER.info(
                 "%s clock %s; set to Home Assistant's time", self._entry.title, found

@@ -2,11 +2,17 @@
 
 from collections.abc import Coroutine
 import logging
-import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from bleak.exc import BleakError
-from yalexs_ble import ExchangeTimes, GetLogError, PushLock, StatusType, YaleXSBLEError
+from yalexs_ble import (
+    ExchangeTimes,
+    GetLogError,
+    PushLock,
+    StatusReply,
+    StatusType,
+    YaleXSBLEError,
+)
 
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later
@@ -20,23 +26,56 @@ _LOGGER = logging.getLogger(__name__)
 # that fails, so the clock logs at debug.
 CLOCK_ERRORS = (TimeoutError, RuntimeError, YaleXSBLEError, BleakError)
 
-# A clock found more than this many seconds off is set to Home Assistant's time.
+# A clock whose whole window lies more than this many seconds off is set in one
+# write.
 SET_LIMIT = 10
-# A sample at least this many seconds off moves the clock one second toward
-# Home Assistant's time. A sample is within 0.5 s of the lock's offset, so a clock
-# less than 1 s off is never moved.
-STEP_LIMIT = 1.5
-# The lock's clock reads in whole seconds, truncated; a sample takes the middle of
-# the second.
-HALF_SECOND = 0.5
+# A reading whose reply came longer than this many seconds after its request is no
+# sample: its window is 1 s plus the round trip wide. In testing the round trip
+# was 0.23 to 0.68 s, and 0.4 s kept 65 of 68 readings.
+MAX_SAMPLE_ROUND_TRIP = 0.4
 # With no sample for this long, the clock is read.
 QUIET_TIME = 6 * 3600
 
 
-def _toward_zero(offset: float) -> int:
-    """Return the offset rounded to the whole second, one second nearer zero."""
-    seconds = math.floor(abs(offset) + 0.5) - 1
-    return seconds if offset > 0 else -seconds
+class Window(NamedTuple):
+    """The lock's clock less Home Assistant's lies above low and at or below high."""
+
+    low: float
+    high: float
+
+    def describe(self) -> str:
+        """Return the window in words, to a tenth of a second."""
+        side = "ahead" if self.low >= 0 else "behind"
+        return f"{abs(self.low):.1f} to {abs(self.high):.1f} s {side}"
+
+
+def _sample_window(lock_time: int, times: ExchangeTimes) -> Window | None:
+    """Return the window of a reading of the lock's second lock_time, or None when its reply was too slow."""
+    if times.reply_received - times.request_written > MAX_SAMPLE_ROUND_TRIP:
+        return None
+    # The lock read its clock between the request's write and its reply.
+    return Window(
+        lock_time - times.reply_received, lock_time + 1 - times.request_written
+    )
+
+
+def _set_offset(window: Window) -> float | None:
+    """Return the offset a clock whose whole window lies more than SET_LIMIT off is set to, or None."""
+    if window.high < -SET_LIMIT:
+        return 0.0
+    if window.low > SET_LIMIT:
+        # A write lands late, so a lock ahead is aimed short of zero to stay ahead.
+        return MAX_SAMPLE_ROUND_TRIP
+    return None
+
+
+def _step_offset(window: Window) -> float | None:
+    """Return the offset that moves the clock up to 1 s toward Home Assistant's time without crossing it, or None."""
+    if window.high <= 0 and window.low + 1 <= 0:
+        return window.low + 1
+    if window.low >= 0 and window.high - 1 >= MAX_SAMPLE_ROUND_TRIP:
+        return window.high - 1
+    return None
 
 
 class LockClock:
@@ -52,16 +91,22 @@ class LockClock:
         self._hass = hass
         self._entry = entry
         self._lock = lock
-        self._record_read_time: float | None = None
+        self._record_times: ExchangeTimes | None = None
+        self._estimate: Window | None = None
+        self._estimate_from_write = False
         self._writing = False
         self._write_reply_time: float | None = None
         self._cancel_quiet: CALLBACK_TYPE | None = None
 
     async def async_start(self) -> None:
-        """Read the lock's clock and set it to Home Assistant's time when it is more than SET_LIMIT off."""
-        if (read := await self._async_read()) is not None and abs(read[0]) > SET_LIMIT:
+        """Read the lock's clock and set it to Home Assistant's time when its whole window lies more than SET_LIMIT off."""
+        if (
+            (reply := await self._async_read()) is not None
+            and (window := self._async_estimate(reply.value, reply.times)) is not None
+            and (offset := _set_offset(window)) is not None
+        ):
             self._writing = True
-            await self._async_write(read[0], 0)
+            await self._async_write(window, offset)
         self._async_wait_quiet()
 
     @callback
@@ -73,8 +118,8 @@ class LockClock:
 
     @callback
     def async_record_read(self, times: ExchangeTimes) -> None:
-        """Note when a record's reply arrived, so the GetLogError that ends its drain is a sample."""
-        self._record_read_time = times.reply_received
+        """Keep a record's times, so the GetLogError that ends its drain is a sample."""
+        self._record_times = times
 
     @callback
     def async_sample(self, record: GetLogError) -> None:
@@ -83,34 +128,59 @@ class LockClock:
             # A GetLogError with the dirty bit set answers a GetLog that raced a
             # record's write, and the drain reads on.
             return
-        if (read_time := self._record_read_time) is None:
+        if (times := self._record_times) is None:
             # After a drain that read nothing, the lock repeats the previous
             # GetLogError's times, those of an earlier read.
             return
-        self._record_read_time = None
+        self._record_times = None
         # dirty_bit_cleared_time is the lock's time at the read that emptied the log,
         # the drain's last record.
-        self._async_correct(
-            record.dirty_bit_cleared_time + HALF_SECOND - read_time, read_time
-        )
+        self._async_correct(record.dirty_bit_cleared_time, times)
 
     @callback
-    def _async_correct(self, offset: float, read_time: float) -> bool:
-        """Correct the lock's clock for a sample offset seconds off, read at read_time, as a task; return False when the read is no sample."""
+    def _async_estimate(self, lock_time: int, times: ExchangeTimes) -> Window | None:
+        """Narrow the estimate with a reading of the lock's second lock_time and return it, or None when the reading is no sample."""
         if self._writing or (
-            self._write_reply_time is not None and read_time < self._write_reply_time
+            self._write_reply_time is not None
+            and times.request_written < self._write_reply_time
         ):
-            # The write sets the clock after the read sampled it.
-            return False
+            # A request written before the write's reply may have been answered
+            # from the clock before the write.
+            return None
+        if (window := _sample_window(lock_time, times)) is None:
+            return None
         self._async_wait_quiet()
-        if abs(offset) > SET_LIMIT:
-            new_offset = 0
-        elif abs(offset) >= STEP_LIMIT:
-            new_offset = _toward_zero(offset)
-        else:
-            return True
-        self._writing = True
-        self._async_create_task(self._async_write(offset, new_offset))
+        if (estimate := self._estimate) is not None:
+            low = max(estimate.low, window.low)
+            high = min(estimate.high, window.high)
+            if low < high:
+                self._estimate = Window(low, high)
+                return self._estimate
+            _LOGGER.debug(
+                "%s clock sample %.2f to %.2f s misses the estimate %.2f to %.2f s %s; the estimate starts again from the sample",
+                self._entry.title,
+                window.low,
+                window.high,
+                estimate.low,
+                estimate.high,
+                "set by a write"
+                if self._estimate_from_write
+                else "with no write before it",
+            )
+        self._estimate = window
+        self._estimate_from_write = False
+        return window
+
+    @callback
+    def _async_correct(self, lock_time: int, times: ExchangeTimes) -> bool:
+        """Take a reading as a sample and order a write when one is due, as a task; return False when the reading is no sample."""
+        if (window := self._async_estimate(lock_time, times)) is None:
+            return False
+        if (offset := _set_offset(window)) is None:
+            offset = _step_offset(window)
+        if offset is not None:
+            self._writing = True
+            self._async_create_task(self._async_write(window, offset))
         return True
 
     @callback
@@ -127,7 +197,9 @@ class LockClock:
 
     async def _async_read_sample(self) -> None:
         """Read the lock's clock and correct it."""
-        if (read := await self._async_read()) is None or not self._async_correct(*read):
+        if (reply := await self._async_read()) is None or not self._async_correct(
+            reply.value, reply.times
+        ):
             self._async_wait_quiet()
 
     @callback
@@ -137,34 +209,45 @@ class LockClock:
             self._hass, target, f"{self._entry.title} clock"
         )
 
-    async def _async_read(self) -> tuple[float, float] | None:
-        """Return how many seconds the lock's clock is ahead of Home Assistant's and when the reply arrived, or None when the read fails."""
+    async def _async_read(self) -> StatusReply | None:
+        """Return the lock's clock read, or None when the read fails."""
         try:
-            reply = await self._lock.get_status(StatusType.RTC)
+            return await self._lock.get_status(StatusType.RTC)
         except CLOCK_ERRORS as err:
             _LOGGER.debug("%s clock not read: %s", self._entry.title, err)
             return None
-        read_time = reply.times.reply_received
-        return reply.value + HALF_SECOND - read_time, read_time
 
-    async def _async_write(self, offset: float, new_offset: int) -> None:
-        """Set the lock's clock new_offset seconds from Home Assistant's, and log the offset found."""
+    async def _async_write(self, window: Window, offset: float) -> None:
+        """Set the lock's clock offset seconds from Home Assistant's, start the estimate from the write, and log the window found."""
         try:
-            times = await self._lock.set_rtc(new_offset)
+            times = await self._lock.set_rtc(offset)
         except CLOCK_ERRORS as err:
             _LOGGER.debug("%s clock not set: %s", self._entry.title, err)
+            # The write may have reached the lock.
+            self._estimate = None
             return
         finally:
             self._writing = False
         self._write_reply_time = times.reply_received
-        found = f"{abs(offset):.1f} s {'ahead' if offset > 0 else 'behind'}"
-        if new_offset == 0:
+        round_trip = times.reply_received - times.request_written
+        # The lock applied the write between its request and its reply, so it lands
+        # up to the round trip late. The window takes the lock's second to start at
+        # the write, which is not established; a sample that misses it logs the miss.
+        self._estimate = (
+            Window(offset - round_trip, offset)
+            if round_trip <= MAX_SAMPLE_ROUND_TRIP
+            else None
+        )
+        self._estimate_from_write = True
+        if _set_offset(window) is not None:
             _LOGGER.info(
-                "%s clock %s; set to Home Assistant's time", self._entry.title, found
+                "%s clock %s; set to Home Assistant's time",
+                self._entry.title,
+                window.describe(),
             )
         else:
             _LOGGER.info(
-                "%s clock %s; moved 1 s toward Home Assistant's time",
+                "%s clock %s; moved up to 1 s toward Home Assistant's time",
                 self._entry.title,
-                found,
+                window.describe(),
             )

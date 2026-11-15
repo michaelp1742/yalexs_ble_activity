@@ -3,13 +3,13 @@
 A parallel integration to `yalexs_ble`, Home Assistant's
 [Yale Access Bluetooth](https://www.home-assistant.io/integrations/yalexs_ble/) integration. It shows the lock's own
 log in a logbook of its own: each record Home Assistant reads off the lock is one line in the logbook of this
-integration's device, at the time the lock wrote the record, in the lock's order, such as "Front Door keypad code by
-Guest at slot 15". Each record also fires an event for automations, whose type names the source of a credential's use
-or of a lock operation (a keypad code, the master code, an RF tag, the keypad's button, the inside button, a command
-over Bluetooth, the lock's own relock), or the kind of any other record (a door opened, a code added, the keypad's
-info). The integration keeps the lock's clock in step with Home Assistant's. It reads the records through Yale Access
-Bluetooth's connection to the lock and changes nothing in that integration. It has no PIN actions, changes no setting
-on the lock but its clock, and stores no names.
+integration's device, at the time the lock wrote the record, in the lock's order, such as "Front Door unlocked
+(keypad code by Guest at slot 15)". Each record also fires an event for automations, whose type names the source of a
+credential's use or of a lock operation (a keypad code, the master code, an RF tag, the keypad's button, the inside
+button, a command over Bluetooth, the lock's own relock), or the kind of any other record (a door opened, a code added,
+the keypad's info). The integration keeps the lock's clock in step with Home Assistant's. It reads the records
+through Yale Access Bluetooth's connection to the lock and changes nothing in that integration. It has no PIN actions,
+changes no setting on the lock but its clock, and stores no names.
 
 ## Requirements
 
@@ -81,15 +81,22 @@ writes nothing on the lock; the device and its logbook stay.
 The logbook of this integration's device, on the device's page or in **Activity** filtered to the device, lists one
 line per record, in the order the lock wrote them:
 
-- "Front Door keypad code by Guest at slot 15", a keypad code with its name from Yale Access Bluetooth Keypad;
-- "Front Door keypad code at slot 1", a slot with no name;
+- "Front Door unlocked (keypad code by Guest at slot 15)", a keypad code with its name from Yale Access Bluetooth
+  Keypad;
+- "Front Door unlocked (keypad code at slot 1)", a slot with no name;
+- "Front Door locked (master code)", a code at the model's master code slot;
+- "Front Door secured (RF tag at slot 7)", an RF tag;
+- "Front Door unlocked (remote)", "Front Door locked (auto lock)", a lock operation;
 - "Front Door code added for Guest at slot 4", an addition or a deletion;
-- "Front Door master code", a code at the model's master code slot;
-- "Front Door keypad info", "Front Door door opened", "Front Door auto lock", and so on for every other record.
+- "Front Door keypad info", "Front Door door opened", and so on for every other record.
 
-The line is the device's name, the type's words, the name where one is known, and the slot where the record has one,
-but for the master code, whose slot is the model's. A slot above `0xFF` is written in hexadecimal: a code added at the
-master code slot reads "code added at slot 0xFFEE".
+The line is the device's name and the record's words: the type's words, the name where one is known, and the slot where
+the record has one, but for the master code, whose slot is the model's. The record of a lock operation or of a
+credential's use holds the lock's state after it, and its line has that state, such as "unlocked", "locked", or
+"secured", before the record's words, which are then in parentheses. The record of a credential added or deleted holds
+the lock's state too but records no operation, so its line has no state, and neither has the line of a code added or
+deleted, a door change, a refused credential, or the keypad's info. A slot above `0xFF` is written in hexadecimal: a
+code added at the master code slot reads "code added at slot 0xFFEE".
 
 Each line is placed at the record's own time, the lock's clock when it wrote the record, not the time Home Assistant
 read it. A keypad code entered before the lock relocked sits before the relock's line, whenever the two were read, and
@@ -138,9 +145,9 @@ On the locks tested, a keypad code the lock accepts writes two records, the keyp
 gives `keypad_info` and then `pin`, or `master_code` at the master code slot. A `keypad_info` alone is an entry the
 lock did not act on, such as an invalid code or a key pressed without a code; an invalid code has also left no record.
 A fingerprint at the Yale Smart Keypad 2 - Fingerprint is recorded as a code at the slot of the PIN associated with
-it, a lock slot of its own, so it gives `pin`, and its line names that slot, for example "keypad code at slot 9".
-Nothing in the record says the slot is a fingerprint, so the line reads as a keypad code, and it has a name only when
-a credential integration names that slot.
+it, a lock slot of its own, so it gives `pin`, and its line names that slot, for example "unlocked (keypad code at slot
+9)". Nothing in the record says the slot is a fingerprint, so the line reads as a keypad code, and it has a name only
+when a credential integration names that slot.
 
 An unlock from the Yale Home app is a `remote` record when Home Assistant reads it. While the app is connected to the
 lock, it can read the record first, and the unlock then gives nothing here.
@@ -240,21 +247,25 @@ request was written. Home Assistant takes a reading from:
   record. That answer holds the lock's time at that read, and is paired with that record's request and reply. When a
   read finds the log already empty, the answer repeats the previous one's time, so it is no reading.
 
-A reading whose reply came more than `MAX_SAMPLE_ROUND_TRIP` after its request is not used. Between writes, Home
-Assistant keeps the part of the window common to every reading, so the estimate narrows below a second as readings fall
-at other points of the lock's second. A reading outside the estimate starts it again and logs a debug line.
+A reading whose reply came `MAX_SAMPLE_ROUND_TRIP` or more after its request is not used. Between writes, Home Assistant
+keeps the part of the window common to every reading, so the estimate narrows below a second as readings fall at other
+points of the lock's second. A reading outside the estimate starts it again and logs a debug line.
 
 Home Assistant writes the clock only when the whole estimate lies on one side of its own time:
 
 - More than 10 seconds off, at setup or at any later reading, it sets the clock: to its own time for a lock behind, and
   `MAX_SAMPLE_ROUND_TRIP` ahead of it for a lock ahead, since a write lands up to its round trip late.
-- Otherwise, at a later reading, it moves the clock up to 1 second toward its own time, when the estimate after the
-  move stays on the lock's side. A lock behind ends within 1 second of Home Assistant's time, and a lock ahead within
-  1 second plus `MAX_SAMPLE_ROUND_TRIP`.
+- Otherwise, at a later reading, it moves the clock up to 1 second toward its own time, when the estimate is narrower
+  than 1 second less `MAX_SAMPLE_ROUND_TRIP` and the estimate after the move stays on the lock's side. One reading's
+  window is wider than that, so an estimate that starts from a reading allows no move until further readings narrow it.
+  A lock behind ends within 1 second of Home Assistant's time, and a lock ahead within 1 second plus
+  `MAX_SAMPLE_ROUND_TRIP`.
 
 The `yalexs-ble` library sends each write at the moment that gives its second's fraction, and the estimate starts again
-from the write. Each write logs one info line, such as "Front Door clock 2.6 to 1.3 s behind; moved up to 1 s toward
-Home Assistant's time". A read or write that fails logs a debug line, and the next reading goes ahead as usual.
+from the write. A write whose reply came `MAX_SAMPLE_ROUND_TRIP` or more after its request, or that fails, leaves the
+estimate empty until the next reading that is used. Each write logs one info line, such as "Front Door clock 1.7 to
+1.3 s behind; moved up to 1 s toward Home Assistant's time". A read or write that fails logs a debug line, and the next
+reading goes ahead as usual.
 
 ## Limits
 

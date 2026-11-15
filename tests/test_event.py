@@ -27,7 +27,7 @@ from yalexs_ble import (
     parse_log_event_packet,
 )
 
-from custom_components.yalexs_ble_activity.activity import activity_for
+from custom_components.yalexs_ble_activity.activity import Activity, activity_for
 from custom_components.yalexs_ble_activity.const import (
     DOMAIN,
     EVENT_LOG_RECORD,
@@ -59,6 +59,7 @@ from . import (
     CODE_OPERATION_SLOT_1,
     CODE_OPERATION_SLOT_FFEE,
     CREDENTIAL_ADDED_RF_SLOT_7,
+    CREDENTIAL_ADDED_RF_SLOT_7_LOCKED,
     CREDENTIAL_DELETED_RF_SLOT_7,
     CREDENTIAL_TYPE_3_SLOT_2_UNLOCKED,
     DIALOG_REBOOT,
@@ -74,6 +75,7 @@ from . import (
     FACTORY_RESET,
     FINGER_SLOT_2_UNLOCKED,
     HOMEKEY_OPERATION,
+    HOMEKEY_OPERATION_LOCKED,
     INSIDE_BUTTON_LOCKED,
     INSIDE_DOOR_PIN_SLOT_3_UNLOCKED,
     KEYPAD_BUTTON_LOCKED,
@@ -90,6 +92,7 @@ from . import (
     PIN_SLOT_3_UNLOCKED,
     PRODUCT_MESSAGE,
     REMOTE_UNLOCKED,
+    RF_SLOT_1_SECUREMODE,
     RF_SLOT_7_AT_PIN_SLOT_3,
     RF_SLOT_7_UNLOCKED,
     RF_SLOT_8_ERROR,
@@ -102,6 +105,7 @@ from . import (
     enable_entity,
     last_data,
     lock_operation,
+    remote_operation,
 )
 
 # A time after the own times of CODE_OPERATION_SLOT_FFEE and ONE_TOUCH_LOCKED, both
@@ -147,8 +151,9 @@ CREDENTIAL_OPERATION_ATTRIBUTES = {
     "battery_level_percent": 55,
 }
 
-# The OpCode members whose event type names the operation's source, listed in
-# EVENT_TYPES before the other members.
+# The OpCode members whose source is keypad_button, remote, manual, or auto_lock.
+# ONE_REPLY_PER_SOURCE holds one reply for each of those four sources, and one for
+# each member outside this set.
 SOURCE_OP_CODES = {
     OpCode.DOOR_STATE_CHANGED,
     OpCode.DOOR_MANUAL_STATE_CHANGE,
@@ -159,21 +164,13 @@ SOURCE_OP_CODES = {
 
 # One reply for each event type, in the order the types are listed.
 ONE_REPLY_PER_TYPE = [
-    CODE_OPERATION_SLOT_FFEE,
-    CODE_OPERATION_SLOT_1,
-    RF_SLOT_7_UNLOCKED,
-    FINGER_SLOT_2_UNLOCKED,
-    FACE_SLOT_2_UNLOCKED,
-    PALM_SLOT_2_UNLOCKED,
-    ALIRO_SLOT_2_UNLOCKED,
-    CREDENTIAL_TYPE_3_SLOT_2_UNLOCKED,
-    RF_SLOT_8_ERROR,
-    KEYPAD_BUTTON_LOCKED,
-    REMOTE_UNLOCKED,
-    INSIDE_BUTTON_LOCKED,
     AUTO_RELOCK_LOCKED,
-    *[lock_operation(op_code) for op_code in OpCode if op_code not in SOURCE_OP_CODES],
-    lock_operation(0x16),
+    REMOTE_UNLOCKED,
+    AUTO_RELOCK_SECUREMODE,
+    remote_operation(LockStatus.UNLATCHED.value),
+    remote_operation(LockStatus.JAMMED.value),
+    remote_operation(LockStatus.UNKNOWN.value),
+    RF_SLOT_8_ERROR,
     DOOR_OPENED,
     DOOR_CLOSED,
     DOOR_AJAR,
@@ -192,7 +189,6 @@ ONE_REPLY_PER_TYPE = [
     FACTORY_RESET,
     TAMPER_DOOR_FORCED_OPEN,
     BCM_TEST,
-    HOMEKEY_OPERATION,
     DPS_INFO,
     BATTERY_INFO,
     LOCAL_EVENT_NOTIFICATION,
@@ -202,24 +198,51 @@ ONE_REPLY_PER_TYPE = [
     NO_DECODER,
 ]
 
+ONE_REPLY_PER_SOURCE = [
+    CODE_OPERATION_SLOT_FFEE,
+    CODE_OPERATION_SLOT_1,
+    RF_SLOT_7_UNLOCKED,
+    FINGER_SLOT_2_UNLOCKED,
+    FACE_SLOT_2_UNLOCKED,
+    PALM_SLOT_2_UNLOCKED,
+    ALIRO_SLOT_2_UNLOCKED,
+    CREDENTIAL_TYPE_3_SLOT_2_UNLOCKED,
+    KEYPAD_BUTTON_LOCKED,
+    REMOTE_UNLOCKED,
+    INSIDE_BUTTON_LOCKED,
+    AUTO_RELOCK_LOCKED,
+    *[lock_operation(op_code) for op_code in OpCode if op_code not in SOURCE_OP_CODES],
+    lock_operation(0x16),
+    HOMEKEY_OPERATION,
+]
+
+
+def _activities(replies: list[bytes]) -> list[Activity]:
+    """Return the activity of each reply under the unity row."""
+    unity = next(model for model in LOCK_MODELS if model.key == "unity")
+    # The replies' own times are out of order, so they are read without the
+    # reader's window.
+    return [activity_for(parse_log_event_packet(raw), unity) for raw in replies]
+
 
 def _asks(namer: Mock) -> list[tuple[Any, ...]]:
     """Return the arguments after hass of each call of namer."""
     return [called.args[1:] for called in namer.call_args_list]
 
 
-async def test_a_code_record_fires_pin_with_its_decoded_fields(
+async def test_a_code_record_fires_its_lock_state_from_source_pin_with_its_decoded_fields(
     hass: HomeAssistant,
     owner_entry: MockConfigEntry,
     loaded_entry: MockConfigEntry,
     log_records: list[Event],
 ) -> None:
-    """A CodeOperation fires one pin log record event with its lock time, its decoded fields, the first serial, the integration's device, and name None with no platform collected."""
+    """A CodeOperation fires one log record event of its lock state with source pin, its lock time, its decoded fields, the first serial, the integration's device, and name None with no platform collected."""
     await async_deliver(owner_entry, CODE_OPERATION_SLOT_1)
 
     (event,) = log_records
     assert event.data == {
-        ATTR_EVENT_TYPE: "pin",
+        ATTR_EVENT_TYPE: "unlocked",
+        "source": "pin",
         **CODE_OPERATION_SLOT_1_ATTRIBUTES,
         "name": None,
         "serial": 1,
@@ -370,7 +393,8 @@ async def test_a_platform_without_the_function_warns_and_is_not_collected(
     assert record.levelno == logging.WARNING
     assert "broken" in record.getMessage()
     assert last_data(log_records) == {
-        ATTR_EVENT_TYPE: "pin",
+        ATTR_EVENT_TYPE: "unlocked",
+        "source": "pin",
         **CODE_OPERATION_SLOT_1_ATTRIBUTES,
         "name": None,
         "serial": 1,
@@ -383,14 +407,19 @@ async def test_a_platform_without_the_function_warns_and_is_not_collected(
     [
         pytest.param(
             "unity",
-            {ATTR_EVENT_TYPE: "master_code", **CODE_OPERATION_SLOT_FFEE_ATTRIBUTES},
+            {
+                ATTR_EVENT_TYPE: "unlocked",
+                "source": "master_code",
+                **CODE_OPERATION_SLOT_FFEE_ATTRIBUTES,
+            },
             [],
             id="unity_master_code",
         ),
         pytest.param(
             "doorman_classic",
             {
-                ATTR_EVENT_TYPE: "pin",
+                ATTR_EVENT_TYPE: "unlocked",
+                "source": "pin",
                 **CODE_OPERATION_SLOT_FFEE_ATTRIBUTES,
                 "name": None,
             },
@@ -400,7 +429,8 @@ async def test_a_platform_without_the_function_warns_and_is_not_collected(
         pytest.param(
             "retired_model",
             {
-                ATTR_EVENT_TYPE: "pin",
+                ATTR_EVENT_TYPE: "unlocked",
+                "source": "pin",
                 **CODE_OPERATION_SLOT_FFEE_ATTRIBUTES,
                 "name": None,
             },
@@ -418,7 +448,7 @@ async def test_the_master_code_slot_comes_from_the_model_row(
     expected: dict[str, Any],
     asks: list[tuple[Any, ...]],
 ) -> None:
-    """The model row's master code slot fires master_code with no platform asked; a row without one fires pin."""
+    """The model row's master code slot gives the source master_code with no platform asked; a row without one gives pin."""
     freezer.move_to(AFTER_SLOT_FFEE)
     namer = Mock(return_value=None)
     await async_setup_platform(hass, "keypad", async_credential_name=namer)
@@ -439,7 +469,8 @@ async def test_the_master_code_slot_comes_from_the_model_row(
         pytest.param(
             RF_SLOT_7_UNLOCKED,
             {
-                ATTR_EVENT_TYPE: "rf",
+                ATTR_EVENT_TYPE: "unlocked",
+                "source": "rf",
                 "backlog": False,
                 "timestamp": "2026-10-25T07:18:41+00:00",
                 "log_type": 14,
@@ -458,7 +489,8 @@ async def test_the_master_code_slot_comes_from_the_model_row(
         pytest.param(
             PIN_SLOT_3_UNLOCKED,
             {
-                ATTR_EVENT_TYPE: "pin",
+                ATTR_EVENT_TYPE: "unlocked",
+                "source": "pin",
                 **CREDENTIAL_OPERATION_ATTRIBUTES,
                 "credential_type": "pin",
                 "slot": 3,
@@ -470,7 +502,8 @@ async def test_the_master_code_slot_comes_from_the_model_row(
         pytest.param(
             INSIDE_DOOR_PIN_SLOT_3_UNLOCKED,
             {
-                ATTR_EVENT_TYPE: "pin",
+                ATTR_EVENT_TYPE: "unlocked",
+                "source": "pin",
                 **CREDENTIAL_OPERATION_ATTRIBUTES,
                 "credential_type": "inside_door_pin",
                 "slot": 3,
@@ -482,7 +515,8 @@ async def test_the_master_code_slot_comes_from_the_model_row(
         pytest.param(
             FINGER_SLOT_2_UNLOCKED,
             {
-                ATTR_EVENT_TYPE: "finger",
+                ATTR_EVENT_TYPE: "unlocked",
+                "source": "finger",
                 **CREDENTIAL_OPERATION_ATTRIBUTES,
                 "credential_type": "finger",
                 "slot": 2,
@@ -494,7 +528,8 @@ async def test_the_master_code_slot_comes_from_the_model_row(
         pytest.param(
             FACE_SLOT_2_UNLOCKED,
             {
-                ATTR_EVENT_TYPE: "face",
+                ATTR_EVENT_TYPE: "unlocked",
+                "source": "face",
                 **CREDENTIAL_OPERATION_ATTRIBUTES,
                 "credential_type": "face",
                 "slot": 2,
@@ -506,7 +541,8 @@ async def test_the_master_code_slot_comes_from_the_model_row(
         pytest.param(
             PALM_SLOT_2_UNLOCKED,
             {
-                ATTR_EVENT_TYPE: "palm",
+                ATTR_EVENT_TYPE: "unlocked",
+                "source": "palm",
                 **CREDENTIAL_OPERATION_ATTRIBUTES,
                 "credential_type": "palm",
                 "slot": 2,
@@ -518,7 +554,8 @@ async def test_the_master_code_slot_comes_from_the_model_row(
         pytest.param(
             ALIRO_SLOT_2_UNLOCKED,
             {
-                ATTR_EVENT_TYPE: "aliro",
+                ATTR_EVENT_TYPE: "unlocked",
+                "source": "aliro",
                 **CREDENTIAL_OPERATION_ATTRIBUTES,
                 "credential_type": "aliro",
                 "slot": 2,
@@ -530,7 +567,8 @@ async def test_the_master_code_slot_comes_from_the_model_row(
         pytest.param(
             CREDENTIAL_TYPE_3_SLOT_2_UNLOCKED,
             {
-                ATTR_EVENT_TYPE: "credential",
+                ATTR_EVENT_TYPE: "unlocked",
+                "source": "credential",
                 **CREDENTIAL_OPERATION_ATTRIBUTES,
                 "credential_type": 3,
                 "slot": 2,
@@ -554,7 +592,7 @@ async def test_the_master_code_slot_comes_from_the_model_row(
         ),
     ],
 )
-async def test_a_credential_operation_fires_the_type_of_its_credential(
+async def test_a_credential_operation_fires_its_lock_state_with_the_source_of_its_credential(
     hass: HomeAssistant,
     owner_entry: MockConfigEntry,
     loaded_entry: MockConfigEntry,
@@ -563,7 +601,7 @@ async def test_a_credential_operation_fires_the_type_of_its_credential(
     expected: dict[str, Any],
     asks: list[tuple[Any, ...]],
 ) -> None:
-    """A CredentialOperation fires its credential's type, and a name is asked for the record's LockCred."""
+    """A CredentialOperation fires its lock state with its credential's source, a refused one fires credential_error with no source, and a name is asked for the record's LockCred."""
     namer = Mock(return_value=None)
     await async_setup_platform(hass, "keypad", async_credential_name=namer)
 
@@ -583,7 +621,8 @@ async def test_a_credential_operation_fires_the_type_of_its_credential(
         pytest.param(
             KEYPAD_BUTTON_LOCKED,
             {
-                ATTR_EVENT_TYPE: "keypad_button",
+                ATTR_EVENT_TYPE: "locked",
+                "source": "keypad_button",
                 "op_code": "door_state_changed",
                 "key_slot": 0xFF,
             },
@@ -591,13 +630,18 @@ async def test_a_credential_operation_fires_the_type_of_its_credential(
         ),
         pytest.param(
             ONE_TOUCH_LOCKED,
-            {ATTR_EVENT_TYPE: "keypad_button", "op_code": "one_touch"},
+            {
+                ATTR_EVENT_TYPE: "locked",
+                "source": "keypad_button",
+                "op_code": "one_touch",
+            },
             id="keypad_button_one_touch",
         ),
         pytest.param(
             REMOTE_UNLOCKED,
             {
-                ATTR_EVENT_TYPE: "remote",
+                ATTR_EVENT_TYPE: "unlocked",
+                "source": "remote",
                 "op_code": "door_state_changed",
                 "key_slot": 0,
                 "current_lock_state": "unlocked",
@@ -606,40 +650,65 @@ async def test_a_credential_operation_fires_the_type_of_its_credential(
         ),
         pytest.param(
             INSIDE_BUTTON_LOCKED,
-            {ATTR_EVENT_TYPE: "manual", "op_code": "inside_button"},
+            {
+                ATTR_EVENT_TYPE: "locked",
+                "source": "manual",
+                "op_code": "inside_button",
+            },
             id="manual_inside_button",
         ),
         pytest.param(
             MANUAL_UNLOCKED,
-            {ATTR_EVENT_TYPE: "manual", "op_code": "door_manual_state_change"},
+            {
+                ATTR_EVENT_TYPE: "unlocked",
+                "source": "manual",
+                "op_code": "door_manual_state_change",
+            },
             id="manual_door_manual_state_change",
         ),
         pytest.param(
             AUTO_RELOCK_LOCKED,
-            {ATTR_EVENT_TYPE: "auto_lock", "current_lock_state": "locked"},
+            {
+                ATTR_EVENT_TYPE: "locked",
+                "source": "auto_lock",
+                "current_lock_state": "locked",
+            },
             id="auto_lock",
         ),
         pytest.param(
             AUTO_RELOCK_SECUREMODE,
-            {ATTR_EVENT_TYPE: "auto_lock", "current_lock_state": "securemode"},
+            {
+                ATTR_EVENT_TYPE: "secured",
+                "source": "auto_lock",
+                "current_lock_state": "securemode",
+            },
             id="auto_lock_securemode",
         ),
         pytest.param(
             lock_operation(OpCode.LOW_BAT_AUTO_UNLOCK),
             {
-                ATTR_EVENT_TYPE: "low_bat_auto_unlock",
+                ATTR_EVENT_TYPE: "locked",
+                "source": "low_bat_auto_unlock",
                 "op_code": "low_bat_auto_unlock",
             },
             id="op_code_member",
         ),
         pytest.param(
             lock_operation(OpCode.ALIRO),
-            {ATTR_EVENT_TYPE: "aliro_operation", "op_code": "aliro"},
+            {
+                ATTR_EVENT_TYPE: "locked",
+                "source": "aliro_operation",
+                "op_code": "aliro",
+            },
             id="op_code_aliro",
         ),
         pytest.param(
             lock_operation(0x16),
-            {ATTR_EVENT_TYPE: "lock_operation", "op_code": 0x16},
+            {
+                ATTR_EVENT_TYPE: "locked",
+                "source": "lock_operation",
+                "op_code": 0x16,
+            },
             id="op_code_outside_opcode",
         ),
         pytest.param(
@@ -665,14 +734,14 @@ async def test_a_credential_operation_fires_the_type_of_its_credential(
     ],
 )
 @pytest.mark.usefixtures("loaded_entry")
-async def test_an_operation_or_door_record_fires_the_type_of_its_source(
+async def test_an_operation_fires_its_lock_state_with_its_source_and_a_door_record_its_door_state(
     freezer: FrozenDateTimeFactory,
     owner_entry: MockConfigEntry,
     log_records: list[Event],
     raw: bytes,
     expected: dict[str, Any],
 ) -> None:
-    """A LockOperation fires the type of its source, and a DoorStateChanged the door's new state, with no name."""
+    """A LockOperation fires its lock state with its source, and a DoorStateChanged the door's new state with no source, each with no name."""
     # The own time of ONE_TOUCH_LOCKED is in 2056.
     freezer.move_to(AFTER_SLOT_FFEE)
 
@@ -680,7 +749,75 @@ async def test_an_operation_or_door_record_fires_the_type_of_its_source(
 
     data = last_data(log_records)
     assert data.items() >= expected.items()
+    assert ("source" in data) == ("source" in expected)
     assert "name" not in data
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected", "asks"),
+    [
+        *(
+            pytest.param(
+                remote_operation(lock_state.value),
+                {
+                    ATTR_EVENT_TYPE: event_type,
+                    "source": "remote",
+                    "current_lock_state": lock_state.name.lower(),
+                },
+                [],
+                id=event_type,
+            )
+            for lock_state, event_type in (
+                (LockStatus.LOCKED, "locked"),
+                (LockStatus.UNLOCKED, "unlocked"),
+                (LockStatus.SECUREMODE, "secured"),
+                (LockStatus.UNLATCHED, "unlatched"),
+                (LockStatus.JAMMED, "jammed"),
+                (LockStatus.UNKNOWN, "lock_state"),
+            )
+        ),
+        pytest.param(
+            RF_SLOT_1_SECUREMODE,
+            {ATTR_EVENT_TYPE: "secured", "source": "rf", "slot": 1},
+            [(ADDRESS, LockCred.RF, 1)],
+            id="credential_use",
+        ),
+        pytest.param(
+            HOMEKEY_OPERATION_LOCKED,
+            {ATTR_EVENT_TYPE: "locked", "source": "homekey_operation"},
+            [],
+            id="homekey_operation",
+        ),
+        pytest.param(
+            CREDENTIAL_ADDED_RF_SLOT_7_LOCKED,
+            {ATTR_EVENT_TYPE: "credential_added", "current_lock_state": "locked"},
+            [(ADDRESS, LockCred.RF, 7)],
+            id="credential_added",
+        ),
+        pytest.param(
+            DOOR_OPENED, {ATTR_EVENT_TYPE: "door_opened"}, [], id="door_opened"
+        ),
+    ],
+)
+async def test_a_record_of_an_operation_or_a_use_fires_its_lock_state_with_its_source(
+    hass: HomeAssistant,
+    owner_entry: MockConfigEntry,
+    loaded_entry: MockConfigEntry,
+    log_records: list[Event],
+    raw: bytes,
+    expected: dict[str, Any],
+    asks: list[tuple[Any, ...]],
+) -> None:
+    """A record of an operation or a credential's use fires its lock state's type with its source, and a credential added or a door record its kind with no source."""
+    namer = Mock(return_value=None)
+    await async_setup_platform(hass, "keypad", async_credential_name=namer)
+
+    await async_deliver(owner_entry, raw)
+
+    data = last_data(log_records)
+    assert data.items() >= expected.items()
+    assert ("source" in data) == ("source" in expected)
+    assert _asks(namer) == asks
 
 
 @pytest.mark.parametrize("raw", [END_OF_LOG, END_OF_LOG_DIRTY])
@@ -699,7 +836,7 @@ async def test_a_get_log_error_fires_no_event(
 async def test_automations_on_the_log_record_event_run_once_per_matching_record(
     hass: HomeAssistant, owner_entry: MockConfigEntry, loaded_entry: MockConfigEntry
 ) -> None:
-    """Two records in one own second each run the automation whose event data matches their event type, and no other."""
+    """Two records in one own second each run the automation whose event data matches their event type and source, and no other."""
     calls = async_mock_service(hass, "test", "automation")
     assert await async_setup_component(
         hass,
@@ -710,14 +847,14 @@ async def test_automations_on_the_log_record_event_run_once_per_matching_record(
                     "triggers": {
                         "trigger": "event",
                         "event_type": EVENT_LOG_RECORD,
-                        "event_data": {"event_type": event_type},
+                        "event_data": {"event_type": "unlocked", "source": source},
                     },
                     "actions": {
                         "action": "test.automation",
-                        "data": {"event_type": event_type},
+                        "data": {"source": source},
                     },
                 }
-                for event_type in ("pin", "rf", "remote")
+                for source in ("pin", "rf", "remote")
             ]
         },
     )
@@ -726,7 +863,7 @@ async def test_automations_on_the_log_record_event_run_once_per_matching_record(
     await async_deliver(owner_entry, RF_SLOT_7_AT_PIN_SLOT_3)
     await hass.async_block_till_done()
 
-    assert [call.data["event_type"] for call in calls] == ["pin", "rf"]
+    assert [call.data["source"] for call in calls] == ["pin", "rf"]
 
 
 async def test_a_disabled_entity_leaves_the_reader_firing_log_record_events(
@@ -742,7 +879,7 @@ async def test_a_disabled_entity_leaves_the_reader_firing_log_record_events(
 
     await async_deliver(owner_entry, CODE_OPERATION_SLOT_1)
 
-    assert [event.data[ATTR_EVENT_TYPE] for event in log_records] == ["pin"]
+    assert [event.data[ATTR_EVENT_TYPE] for event in log_records] == ["unlocked"]
     assert hass.states.get(ENTITY_ID) is None
 
 
@@ -776,6 +913,10 @@ async def test_an_enabled_entity_fires_each_record_under_its_log_record_event(
         ATTR_EVENT_TYPES: list(EVENT_TYPES),
         ATTR_FRIENDLY_NAME: f"{TITLE} Activity",
     }
+    assert (state.attributes[ATTR_EVENT_TYPE], state.attributes["source"]) == (
+        "unlocked",
+        "pin",
+    )
     assert state.context.id == event.context.id
     assert datetime.fromisoformat(state.state) == NOW
 
@@ -952,7 +1093,8 @@ async def test_code_records_hold_their_codes_and_are_named(
         pytest.param(
             HOMEKEY_OPERATION,
             {
-                ATTR_EVENT_TYPE: "homekey_operation",
+                ATTR_EVENT_TYPE: "unlocked",
+                "source": "homekey_operation",
                 "timestamp": TIME,
                 "log_type": 0x12,
                 "current_lock_state": "unlocked",
@@ -1045,7 +1187,7 @@ async def test_code_records_hold_their_codes_and_are_named(
         ),
     ],
 )
-async def test_each_record_class_fires_its_kind_with_its_decoded_fields(
+async def test_each_other_record_class_fires_its_type_with_its_decoded_fields(
     hass: HomeAssistant,
     owner_entry: MockConfigEntry,
     loaded_entry: MockConfigEntry,
@@ -1053,7 +1195,7 @@ async def test_each_record_class_fires_its_kind_with_its_decoded_fields(
     raw: bytes,
     expected: dict[str, Any],
 ) -> None:
-    """Every other record class fires its kind with each decoded field, and an undecoded record its raw bytes."""
+    """Every other record class fires its kind, or a HomekeyOperation its lock state with its source, with each decoded field, and an undecoded record its raw bytes."""
     await async_deliver(owner_entry, raw)
 
     assert last_data(log_records) == {
@@ -1143,23 +1285,20 @@ async def test_a_record_class_with_no_type_fires_unknown_record_with_its_bytes(
     }
 
 
-def test_event_types_lists_each_type_once_in_the_table_order() -> None:
-    """EVENT_TYPES holds each type once, in the order of the types of one record of each type."""
-    unity = next(model for model in LOCK_MODELS if model.key == "unity")
-
-    # The replies' own times are out of order, so the types are read without the
-    # reader's window.
-    types = [
-        activity_for(parse_log_event_packet(raw), unity).event_type
-        for raw in ONE_REPLY_PER_TYPE
-    ]
+def test_event_types_list_each_type_once_in_the_table_order_and_no_source() -> None:
+    """EVENT_TYPES holds each type once, in the order of the types of one record of each type, and none of the sources."""
+    types = [activity.event_type for activity in _activities(ONE_REPLY_PER_TYPE)]
+    sources = [activity.source for activity in _activities(ONE_REPLY_PER_SOURCE)]
 
     assert types == list(EVENT_TYPES)
     assert len(set(EVENT_TYPES)) == len(EVENT_TYPES)
+    assert None not in sources
+    assert len(set(sources)) == len(sources)
+    assert set(EVENT_TYPES).isdisjoint(sources)
 
 
-def test_translations_and_words_name_each_event_type_and_lock_state() -> None:
-    """The translations hold a state name for each event type and for no other, each type's logbook words equal its state name, less any " (v2)" suffix, but for the first letter's case, and each LockStatus member has logbook words under its name in lower case."""
+def test_translations_and_words_name_each_event_type_source_and_lock_state() -> None:
+    """The translations hold a state name for each event type and each source and for no other, each type's and source's logbook words equal its state name, less any " (v2)" suffix, but for the first letter's case, and each LockStatus member has logbook words under its name in lower case."""
     translations = json.loads(
         (
             Path(__file__).parents[1]
@@ -1172,14 +1311,16 @@ def test_translations_and_words_name_each_event_type_and_lock_state() -> None:
 
     activity = translations["entity"]["event"]["activity"]
     assert activity["name"] == "Activity"
-    words = activity["state_attributes"]["event_type"]["state"]
-    assert words.keys() == set(EVENT_TYPES)
-    assert EVENT_TYPE_WORDS.keys() == words.keys()
-    assert {
-        event_type: word[0].upper() + word[1:]
-        for event_type, word in EVENT_TYPE_WORDS.items()
-    } == {
-        event_type: state_name.removesuffix(" (v2)")
-        for event_type, state_name in words.items()
+    type_names = activity["state_attributes"]["event_type"]["state"]
+    source_names = activity["state_attributes"]["source"]["state"]
+    assert type_names.keys() == set(EVENT_TYPES)
+    assert source_names.keys() == {
+        reply_activity.source for reply_activity in _activities(ONE_REPLY_PER_SOURCE)
     }
+    assert type_names.keys().isdisjoint(source_names)
+    names = type_names | source_names
+    assert EVENT_TYPE_WORDS.keys() == names.keys()
+    assert {
+        key: word[0].upper() + word[1:] for key, word in EVENT_TYPE_WORDS.items()
+    } == {key: name.removesuffix(" (v2)") for key, name in names.items()}
     assert LOCK_STATE_WORDS.keys() == {status.name.lower() for status in LockStatus}

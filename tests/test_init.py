@@ -14,7 +14,6 @@ from custom_components.yalexs_ble_activity.const import (
     DOMAIN,
 )
 from custom_components.yalexs_ble_activity.reader import LogReader
-from homeassistant.components.event import ATTR_EVENT_TYPE
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import ATTR_RESTORED, CONF_ADDRESS, STATE_UNAVAILABLE, Platform
 from homeassistant.core import Event, HomeAssistant
@@ -181,7 +180,7 @@ async def test_core_unload_reloads_entry_until_core_loads(
         config_entry.runtime_data.async_log_record
     )
     await async_deliver(owner_entry, CODE_OPERATION_SLOT_1)
-    assert last_data(log_records)[ATTR_EVENT_TYPE] == "pin"
+    assert last_data(log_records)["source"] == "pin"
 
 
 async def test_core_change_reaches_the_next_listener(

@@ -14,7 +14,6 @@ from custom_components.yalexs_ble_activity.const import (
     OWNER_DOMAIN,
 )
 from custom_components.yalexs_ble_activity.models import LOCK_MODELS
-from homeassistant.components.event import ATTR_EVENT_TYPE
 from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import Event, HomeAssistant
@@ -197,7 +196,7 @@ async def test_options_flow_model_change_reloads_with_the_new_row(
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
     await async_deliver(owner_entry, CODE_OPERATION_SLOT_FFEE)
-    assert last_data(log_records)[ATTR_EVENT_TYPE] == "master_code"
+    assert last_data(log_records)["source"] == "master_code"
 
     result = await hass.config_entries.options.async_init(config_entry.entry_id)
     result = await hass.config_entries.options.async_configure(
@@ -211,5 +210,5 @@ async def test_options_flow_model_change_reloads_with_the_new_row(
     owner_entry.runtime_data.lock.register_log_record_callback.return_value.assert_called_once_with()
     await async_deliver(owner_entry, CODE_OPERATION_SLOT_FFEE)
     data = last_data(log_records)
-    assert data[ATTR_EVENT_TYPE] == "pin"
+    assert data["source"] == "pin"
     assert data["slot"] == 0xFFEE

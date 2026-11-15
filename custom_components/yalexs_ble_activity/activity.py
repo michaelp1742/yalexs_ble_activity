@@ -32,6 +32,7 @@ from yalexs_ble import (
     LocalEventNotification,
     LockCred,
     LockOperation,
+    LockStatus,
     LogRecord,
     MatterMessage,
     OpCode,
@@ -50,17 +51,13 @@ from .const import (
     ATTR_BACKLOG,
     ATTR_TIMESTAMP,
     DOMAIN,
-    EVENT_TYPE_ALIRO,
-    EVENT_TYPE_ALIRO_OPERATION,
     EVENT_TYPE_ALL_CODES_DELETED,
-    EVENT_TYPE_AUTO_LOCK,
     EVENT_TYPE_BATTERY_INFO,
     EVENT_TYPE_BCM_TEST,
     EVENT_TYPE_CODE_ADDED,
     EVENT_TYPE_CODE_ADDED_V2,
     EVENT_TYPE_CODE_DELETED,
     EVENT_TYPE_CODE_DELETED_V2,
-    EVENT_TYPE_CREDENTIAL,
     EVENT_TYPE_CREDENTIAL_ADDED,
     EVENT_TYPE_CREDENTIAL_DELETED,
     EVENT_TYPE_CREDENTIAL_ERROR,
@@ -70,27 +67,37 @@ from .const import (
     EVENT_TYPE_DOOR_OPENED,
     EVENT_TYPE_DOOR_STATE_CHANGED,
     EVENT_TYPE_DPS_INFO,
-    EVENT_TYPE_FACE,
     EVENT_TYPE_FACTORY_RESET,
-    EVENT_TYPE_FINGER,
-    EVENT_TYPE_HOMEKEY_OPERATION,
-    EVENT_TYPE_KEYPAD_BUTTON,
+    EVENT_TYPE_JAMMED,
     EVENT_TYPE_KEYPAD_CLOSE,
     EVENT_TYPE_KEYPAD_INFO,
     EVENT_TYPE_KEYPAD_OPEN,
     EVENT_TYPE_KEYPAD_WRONG_CODE,
     EVENT_TYPE_LOCAL_EVENT_NOTIFICATION,
-    EVENT_TYPE_LOCK_OPERATION,
-    EVENT_TYPE_MANUAL,
-    EVENT_TYPE_MASTER_CODE,
+    EVENT_TYPE_LOCK_STATE,
+    EVENT_TYPE_LOCKED,
     EVENT_TYPE_MATTER_MESSAGE,
-    EVENT_TYPE_PALM,
-    EVENT_TYPE_PIN,
     EVENT_TYPE_PRODUCT_MESSAGE,
-    EVENT_TYPE_REMOTE,
-    EVENT_TYPE_RF,
+    EVENT_TYPE_SECURED,
     EVENT_TYPE_TAMPER,
     EVENT_TYPE_UNKNOWN_RECORD,
+    EVENT_TYPE_UNLATCHED,
+    EVENT_TYPE_UNLOCKED,
+    SOURCE_ALIRO,
+    SOURCE_ALIRO_OPERATION,
+    SOURCE_AUTO_LOCK,
+    SOURCE_CREDENTIAL,
+    SOURCE_FACE,
+    SOURCE_FINGER,
+    SOURCE_HOMEKEY_OPERATION,
+    SOURCE_KEYPAD_BUTTON,
+    SOURCE_LOCK_OPERATION,
+    SOURCE_MANUAL,
+    SOURCE_MASTER_CODE,
+    SOURCE_PALM,
+    SOURCE_PIN,
+    SOURCE_REMOTE,
+    SOURCE_RF,
 )
 from .models import LockModel
 
@@ -100,12 +107,20 @@ type CredentialNamer = Callable[[HomeAssistant, str, LockCred, int], str | None]
 
 DATA_NAMERS: HassKey[list[CredentialNamer]] = HassKey(f"{DOMAIN}_namers")
 
-_CREDENTIAL_EVENT_TYPES = {
-    LockCred.RF: EVENT_TYPE_RF,
-    LockCred.FINGER: EVENT_TYPE_FINGER,
-    LockCred.FACE: EVENT_TYPE_FACE,
-    LockCred.PALM: EVENT_TYPE_PALM,
-    LockCred.ALIRO: EVENT_TYPE_ALIRO,
+_LOCK_STATE_EVENT_TYPES = {
+    LockStatus.LOCKED: EVENT_TYPE_LOCKED,
+    LockStatus.UNLOCKED: EVENT_TYPE_UNLOCKED,
+    LockStatus.SECUREMODE: EVENT_TYPE_SECURED,
+    LockStatus.UNLATCHED: EVENT_TYPE_UNLATCHED,
+    LockStatus.JAMMED: EVENT_TYPE_JAMMED,
+}
+
+_CREDENTIAL_SOURCES = {
+    LockCred.RF: SOURCE_RF,
+    LockCred.FINGER: SOURCE_FINGER,
+    LockCred.FACE: SOURCE_FACE,
+    LockCred.PALM: SOURCE_PALM,
+    LockCred.ALIRO: SOURCE_ALIRO,
 }
 
 _DOOR_EVENT_TYPES = {
@@ -129,7 +144,6 @@ _RECORD_EVENT_TYPES: dict[type[LogRecord], str] = {
     FactoryReset: EVENT_TYPE_FACTORY_RESET,
     Tamper: EVENT_TYPE_TAMPER,
     BCMTest: EVENT_TYPE_BCM_TEST,
-    HomekeyOperation: EVENT_TYPE_HOMEKEY_OPERATION,
     DPSInfo: EVENT_TYPE_DPS_INFO,
     BatteryInfo: EVENT_TYPE_BATTERY_INFO,
     LocalEventNotification: EVENT_TYPE_LOCAL_EVENT_NOTIFICATION,
@@ -140,9 +154,10 @@ _RECORD_EVENT_TYPES: dict[type[LogRecord], str] = {
 
 
 class Activity(NamedTuple):
-    """The event type of a record, and the credential slot and type a name is asked for."""
+    """The event type and source of a record, and the credential slot and type a name is asked for."""
 
     event_type: str
+    source: str | None
     slot: int | None
     credential_type: LockCred | None
 
@@ -155,34 +170,51 @@ def _kind_event_type(record: LogRecord) -> str:
     return EVENT_TYPE_UNKNOWN_RECORD
 
 
-def _code_activity(slot: int, credential_type: LockCred, model: LockModel) -> Activity:
+def _operation_lock_state(record: LogRecord) -> LockStatus | None:
+    """Return the lock state of a record of an operation or a credential's use, else None."""
+    match record:
+        case (
+            LockOperation(current_lock_state=lock_state)
+            | CodeOperation(current_lock_state=lock_state)
+            | CredentialOperation(current_lock_state=lock_state)
+            | HomekeyOperation(current_lock_state=lock_state)
+        ):
+            return lock_state
+    return None
+
+
+def _code_source(
+    slot: int, credential_type: LockCred, model: LockModel
+) -> tuple[str, int | None, LockCred | None]:
     """Return master_code at the model row's master code slot, else pin with slot and credential_type."""
     if slot == model.master_code_slot:
-        return Activity(EVENT_TYPE_MASTER_CODE, None, None)
-    return Activity(EVENT_TYPE_PIN, slot, credential_type)
+        return SOURCE_MASTER_CODE, None, None
+    return SOURCE_PIN, slot, credential_type
 
 
-def activity_for(record: LogRecord, model: LockModel) -> Activity:
-    """Return the activity of a record: the source of a use or an operation, else its kind."""
+def _source_or_kind(
+    record: LogRecord, model: LockModel
+) -> tuple[str, int | None, LockCred | None]:
+    """Return the source of a use or an operation, else the record's kind, with the slot and credential type to name."""
     match record:
         case CodeOperation(slot=slot):
-            return _code_activity(slot, LockCred.PIN, model)
+            return _code_source(slot, LockCred.PIN, model)
         case CredentialOperation(
             credential_type=LockCred() as credential_type,
             credential_error=None,
             slot=slot,
         ):
             if credential_type in (LockCred.PIN, LockCred.INSIDE_DOOR_PIN):
-                return _code_activity(slot, credential_type, model)
-            return Activity(
-                _CREDENTIAL_EVENT_TYPES.get(credential_type, EVENT_TYPE_CREDENTIAL),
+                return _code_source(slot, credential_type, model)
+            return (
+                _CREDENTIAL_SOURCES.get(credential_type, SOURCE_CREDENTIAL),
                 slot,
                 credential_type,
             )
         case CredentialOperation(credential_error=None):
-            return Activity(EVENT_TYPE_CREDENTIAL, None, None)
+            return SOURCE_CREDENTIAL, None, None
         case CredentialOperation():
-            return Activity(EVENT_TYPE_CREDENTIAL_ERROR, None, None)
+            return EVENT_TYPE_CREDENTIAL_ERROR, None, None
         # In field captures a press of the keypad's Yale button was recorded as
         # DOOR_STATE_CHANGED with key_slot 0xFF, and a command over Bluetooth with
         # key_slot 0.
@@ -190,25 +222,27 @@ def activity_for(record: LogRecord, model: LockModel) -> Activity:
             LockOperation(op_code=OpCode.DOOR_STATE_CHANGED, key_slot=0xFF)
             | LockOperation(op_code=OpCode.ONE_TOUCH)
         ):
-            return Activity(EVENT_TYPE_KEYPAD_BUTTON, None, None)
+            return SOURCE_KEYPAD_BUTTON, None, None
         case LockOperation(op_code=OpCode.DOOR_STATE_CHANGED):
-            return Activity(EVENT_TYPE_REMOTE, None, None)
+            return SOURCE_REMOTE, None, None
         case LockOperation(
             op_code=OpCode.DOOR_MANUAL_STATE_CHANGE | OpCode.INSIDE_BUTTON
         ):
-            return Activity(EVENT_TYPE_MANUAL, None, None)
+            return SOURCE_MANUAL, None, None
         case LockOperation(op_code=OpCode.AUTO_RELOCK):
-            return Activity(EVENT_TYPE_AUTO_LOCK, None, None)
+            return SOURCE_AUTO_LOCK, None, None
         case LockOperation(op_code=OpCode.ALIRO):
-            # The name of OpCode.ALIRO in lower case is EVENT_TYPE_ALIRO, the type of a
-            # credential's use, so the operation has a type of its own.
-            return Activity(EVENT_TYPE_ALIRO_OPERATION, None, None)
+            # The name of OpCode.ALIRO in lower case is SOURCE_ALIRO, the source of a
+            # credential's use, so the operation has a source of its own.
+            return SOURCE_ALIRO_OPERATION, None, None
         case LockOperation(op_code=OpCode() as op_code):
-            return Activity(op_code.name.lower(), None, None)
+            return op_code.name.lower(), None, None
         case LockOperation():
-            return Activity(EVENT_TYPE_LOCK_OPERATION, None, None)
+            return SOURCE_LOCK_OPERATION, None, None
+        case HomekeyOperation():
+            return SOURCE_HOMEKEY_OPERATION, None, None
         case DoorStateChanged(current_door_state=door_state):
-            return Activity(
+            return (
                 _DOOR_EVENT_TYPES.get(door_state, EVENT_TYPE_DOOR_STATE_CHANGED),
                 None,
                 None,
@@ -219,15 +253,28 @@ def activity_for(record: LogRecord, model: LockModel) -> Activity:
             | CodeAddedv2(slot=slot)
             | CodeDeletedv2(slot=slot)
         ):
-            return Activity(_kind_event_type(record), slot, LockCred.PIN)
+            return _kind_event_type(record), slot, LockCred.PIN
         case (
             CredentialAdded(credential_type=LockCred() as credential_type, slot=slot)
             | CredentialDeleted(
                 credential_type=LockCred() as credential_type, slot=slot
             )
         ):
-            return Activity(_kind_event_type(record), slot, credential_type)
-    return Activity(_kind_event_type(record), None, None)
+            return _kind_event_type(record), slot, credential_type
+    return _kind_event_type(record), None, None
+
+
+def activity_for(record: LogRecord, model: LockModel) -> Activity:
+    """Return the activity of a record: the lock state with the source of a use or an operation, else the record's kind."""
+    source_or_kind, slot, credential_type = _source_or_kind(record, model)
+    if (lock_state := _operation_lock_state(record)) is None:
+        return Activity(source_or_kind, None, slot, credential_type)
+    return Activity(
+        _LOCK_STATE_EVENT_TYPES.get(lock_state, EVENT_TYPE_LOCK_STATE),
+        source_or_kind,
+        slot,
+        credential_type,
+    )
 
 
 def _attribute_value(value: Any) -> Any:

@@ -79,7 +79,7 @@ async def test_records_in_one_own_second_are_placed_a_millisecond_apart(
     assert keypad_info.data[ATTR_EVENT_TYPE] == "keypad_info"
     assert keypad_info.data["battery_level"] == 195
     assert keypad_info.data["stats"] == 0x80000000
-    assert pin.data[ATTR_EVENT_TYPE] == "pin"
+    assert (pin.data[ATTR_EVENT_TYPE], pin.data["source"]) == ("unlocked", "pin")
     assert keypad_info.time_fired_timestamp == CODE_OPERATION_SLOT_1_TIME
     assert pin.time_fired_timestamp == keypad_info.time_fired_timestamp + 0.001
 
@@ -101,7 +101,7 @@ async def test_a_backlog_record_before_the_last_fired_is_discarded(
 
     assert [
         (
-            event.data[ATTR_EVENT_TYPE],
+            event.data["source"],
             event.time_fired.isoformat(),
             event.data["backlog"],
             event.data["serial"],
@@ -269,7 +269,7 @@ async def test_records_read_at_a_start_fire_once_home_assistant_has_started(
 
     assert [
         (
-            event.data[ATTR_EVENT_TYPE],
+            event.data["source"],
             event.data.get("name"),
             event.data["backlog"],
             event.time_fired.isoformat(),

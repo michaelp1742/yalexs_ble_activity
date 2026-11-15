@@ -12,24 +12,17 @@ ATTR_NAME = "name"
 ATTR_RAW = "raw"
 ATTR_SERIAL = "serial"
 ATTR_SLOT = "slot"
+ATTR_SOURCE = "source"
 
 EVENT_LOG_RECORD = "yalexs_ble_activity_log_record"
 
-EVENT_TYPE_MASTER_CODE = "master_code"
-EVENT_TYPE_PIN = "pin"
-EVENT_TYPE_RF = "rf"
-EVENT_TYPE_FINGER = "finger"
-EVENT_TYPE_FACE = "face"
-EVENT_TYPE_PALM = "palm"
-EVENT_TYPE_ALIRO = "aliro"
-EVENT_TYPE_CREDENTIAL = "credential"
+EVENT_TYPE_LOCKED = "locked"
+EVENT_TYPE_UNLOCKED = "unlocked"
+EVENT_TYPE_SECURED = "secured"
+EVENT_TYPE_UNLATCHED = "unlatched"
+EVENT_TYPE_JAMMED = "jammed"
+EVENT_TYPE_LOCK_STATE = "lock_state"
 EVENT_TYPE_CREDENTIAL_ERROR = "credential_error"
-EVENT_TYPE_KEYPAD_BUTTON = "keypad_button"
-EVENT_TYPE_REMOTE = "remote"
-EVENT_TYPE_MANUAL = "manual"
-EVENT_TYPE_AUTO_LOCK = "auto_lock"
-EVENT_TYPE_ALIRO_OPERATION = "aliro_operation"
-EVENT_TYPE_LOCK_OPERATION = "lock_operation"
 EVENT_TYPE_DOOR_OPENED = "door_opened"
 EVENT_TYPE_DOOR_CLOSED = "door_closed"
 EVENT_TYPE_DOOR_AJAR = "door_ajar"
@@ -48,7 +41,6 @@ EVENT_TYPE_ALL_CODES_DELETED = "all_codes_deleted"
 EVENT_TYPE_FACTORY_RESET = "factory_reset"
 EVENT_TYPE_TAMPER = "tamper"
 EVENT_TYPE_BCM_TEST = "bcm_test"
-EVENT_TYPE_HOMEKEY_OPERATION = "homekey_operation"
 EVENT_TYPE_DPS_INFO = "dps_info"
 EVENT_TYPE_BATTERY_INFO = "battery_info"
 EVENT_TYPE_LOCAL_EVENT_NOTIFICATION = "local_event_notification"
@@ -57,42 +49,14 @@ EVENT_TYPE_MATTER_MESSAGE = "matter_message"
 EVENT_TYPE_DIALOG_REBOOT = "dialog_reboot"
 EVENT_TYPE_UNKNOWN_RECORD = "unknown_record"
 
-# A literal is the event type of a LockOperation whose OpCode member has no
-# constant above: the member's name in lower case.
 EVENT_TYPES = (
-    EVENT_TYPE_MASTER_CODE,
-    EVENT_TYPE_PIN,
-    EVENT_TYPE_RF,
-    EVENT_TYPE_FINGER,
-    EVENT_TYPE_FACE,
-    EVENT_TYPE_PALM,
-    EVENT_TYPE_ALIRO,
-    EVENT_TYPE_CREDENTIAL,
+    EVENT_TYPE_LOCKED,
+    EVENT_TYPE_UNLOCKED,
+    EVENT_TYPE_SECURED,
+    EVENT_TYPE_UNLATCHED,
+    EVENT_TYPE_JAMMED,
+    EVENT_TYPE_LOCK_STATE,
     EVENT_TYPE_CREDENTIAL_ERROR,
-    EVENT_TYPE_KEYPAD_BUTTON,
-    EVENT_TYPE_REMOTE,
-    EVENT_TYPE_MANUAL,
-    EVENT_TYPE_AUTO_LOCK,
-    "knock_received",
-    "bluetooth_received",
-    "anomaly",
-    "auto_retry",
-    "over_temp",
-    "burn_in",
-    "home_kit",
-    "z_wave",
-    "door_sense",
-    "low_bat_auto_unlock",
-    "escape_unlock",
-    "uwb",
-    "external_module_operation",
-    "shabbat_mode",
-    "scheduled_operation",
-    "matter",
-    "double_press",
-    EVENT_TYPE_ALIRO_OPERATION,
-    "undefined",
-    EVENT_TYPE_LOCK_OPERATION,
     EVENT_TYPE_DOOR_OPENED,
     EVENT_TYPE_DOOR_CLOSED,
     EVENT_TYPE_DOOR_AJAR,
@@ -111,7 +75,6 @@ EVENT_TYPES = (
     EVENT_TYPE_FACTORY_RESET,
     EVENT_TYPE_TAMPER,
     EVENT_TYPE_BCM_TEST,
-    EVENT_TYPE_HOMEKEY_OPERATION,
     EVENT_TYPE_DPS_INFO,
     EVENT_TYPE_BATTERY_INFO,
     EVENT_TYPE_LOCAL_EVENT_NOTIFICATION,
@@ -121,42 +84,35 @@ EVENT_TYPES = (
     EVENT_TYPE_UNKNOWN_RECORD,
 )
 
+# A source with no constant here is the name of a LockOperation's OpCode member in
+# lower case.
+SOURCE_MASTER_CODE = "master_code"
+SOURCE_PIN = "pin"
+SOURCE_RF = "rf"
+SOURCE_FINGER = "finger"
+SOURCE_FACE = "face"
+SOURCE_PALM = "palm"
+SOURCE_ALIRO = "aliro"
+SOURCE_CREDENTIAL = "credential"
+SOURCE_KEYPAD_BUTTON = "keypad_button"
+SOURCE_REMOTE = "remote"
+SOURCE_MANUAL = "manual"
+SOURCE_AUTO_LOCK = "auto_lock"
+SOURCE_ALIRO_OPERATION = "aliro_operation"
+SOURCE_LOCK_OPERATION = "lock_operation"
+SOURCE_HOMEKEY_OPERATION = "homekey_operation"
 
-# The logbook words of each event type, as they read mid-sentence.
+
+# The logbook words of each event type and each source, as they read
+# mid-sentence.
 EVENT_TYPE_WORDS = {
-    EVENT_TYPE_MASTER_CODE: "master code",
-    EVENT_TYPE_PIN: "keypad code",
-    EVENT_TYPE_RF: "RF tag",
-    EVENT_TYPE_FINGER: "fingerprint",
-    EVENT_TYPE_FACE: "face",
-    EVENT_TYPE_PALM: "palm",
-    EVENT_TYPE_ALIRO: "Aliro",
-    EVENT_TYPE_CREDENTIAL: "credential",
+    EVENT_TYPE_LOCKED: "locked",
+    EVENT_TYPE_UNLOCKED: "unlocked",
+    EVENT_TYPE_SECURED: "secured",
+    EVENT_TYPE_UNLATCHED: "unlatched",
+    EVENT_TYPE_JAMMED: "jammed",
+    EVENT_TYPE_LOCK_STATE: "lock state",
     EVENT_TYPE_CREDENTIAL_ERROR: "credential refused",
-    EVENT_TYPE_KEYPAD_BUTTON: "keypad button",
-    EVENT_TYPE_REMOTE: "remote",
-    EVENT_TYPE_MANUAL: "manual",
-    EVENT_TYPE_AUTO_LOCK: "auto lock",
-    "knock_received": "knock received",
-    "bluetooth_received": "Bluetooth received",
-    "anomaly": "anomaly",
-    "auto_retry": "auto retry",
-    "over_temp": "over temperature",
-    "burn_in": "burn-in",
-    "home_kit": "HomeKit",
-    "z_wave": "Z-Wave",
-    "door_sense": "DoorSense",
-    "low_bat_auto_unlock": "low battery auto unlock",
-    "escape_unlock": "escape unlock",
-    "uwb": "UWB",
-    "external_module_operation": "external module operation",
-    "shabbat_mode": "Shabbat mode",
-    "scheduled_operation": "scheduled operation",
-    "matter": "Matter",
-    "double_press": "double press",
-    EVENT_TYPE_ALIRO_OPERATION: "Aliro operation",
-    "undefined": "undefined",
-    EVENT_TYPE_LOCK_OPERATION: "lock operation",
     EVENT_TYPE_DOOR_OPENED: "door opened",
     EVENT_TYPE_DOOR_CLOSED: "door closed",
     EVENT_TYPE_DOOR_AJAR: "door ajar",
@@ -175,7 +131,6 @@ EVENT_TYPE_WORDS = {
     EVENT_TYPE_FACTORY_RESET: "factory reset",
     EVENT_TYPE_TAMPER: "tamper",
     EVENT_TYPE_BCM_TEST: "BCM test",
-    EVENT_TYPE_HOMEKEY_OPERATION: "Home Key operation",
     EVENT_TYPE_DPS_INFO: "DPS info",
     EVENT_TYPE_BATTERY_INFO: "battery info",
     EVENT_TYPE_LOCAL_EVENT_NOTIFICATION: "local event notification",
@@ -183,6 +138,39 @@ EVENT_TYPE_WORDS = {
     EVENT_TYPE_MATTER_MESSAGE: "Matter message",
     EVENT_TYPE_DIALOG_REBOOT: "dialog reboot",
     EVENT_TYPE_UNKNOWN_RECORD: "unknown record",
+    SOURCE_MASTER_CODE: "master code",
+    SOURCE_PIN: "keypad code",
+    SOURCE_RF: "RF tag",
+    SOURCE_FINGER: "fingerprint",
+    SOURCE_FACE: "face",
+    SOURCE_PALM: "palm",
+    SOURCE_ALIRO: "Aliro",
+    SOURCE_CREDENTIAL: "credential",
+    SOURCE_KEYPAD_BUTTON: "keypad button",
+    SOURCE_REMOTE: "remote",
+    SOURCE_MANUAL: "manual",
+    SOURCE_AUTO_LOCK: "auto lock",
+    "knock_received": "knock received",
+    "bluetooth_received": "Bluetooth received",
+    "anomaly": "anomaly",
+    "auto_retry": "auto retry",
+    "over_temp": "over temperature",
+    "burn_in": "burn-in",
+    "home_kit": "HomeKit",
+    "z_wave": "Z-Wave",
+    "door_sense": "DoorSense",
+    "low_bat_auto_unlock": "low battery auto unlock",
+    "escape_unlock": "escape unlock",
+    "uwb": "UWB",
+    "external_module_operation": "external module operation",
+    "shabbat_mode": "Shabbat mode",
+    "scheduled_operation": "scheduled operation",
+    "matter": "Matter",
+    "double_press": "double press",
+    SOURCE_ALIRO_OPERATION: "Aliro operation",
+    "undefined": "undefined",
+    SOURCE_LOCK_OPERATION: "lock operation",
+    SOURCE_HOMEKEY_OPERATION: "Home Key operation",
 }
 
 # The logbook words of each lock state, keyed by the LockStatus member's name in

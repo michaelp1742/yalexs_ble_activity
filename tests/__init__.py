@@ -68,6 +68,8 @@ CREDENTIAL_TYPE_3_SLOT_2_UNLOCKED = with_checksum(
 RF_SLOT_8_ERROR = with_checksum("bb2d00000ef3f7e36a010800f337f2160200")
 # PIN_SLOT_3_UNLOCKED with the credential type RF and slot 7, in the same second.
 RF_SLOT_7_AT_PIN_SLOT_3 = with_checksum("bb2d00000ef3f7e36a0107001337f2160200")
+# PIN_SLOT_3_UNLOCKED with the credential type RF, slot 1, and secure mode.
+RF_SLOT_1_SECUREMODE = with_checksum("bb2d00000ef3f7e36a0101001c37f2160200")
 # A constructed KeypadInfo (0x04) from KEYPAD_INFO, with the own time of CODE_OPERATION_SLOT_1.
 KEYPAD_INFO_AT_CODE_OPERATION_SLOT_1 = with_checksum(
     "bb2d000004fc2fe06ac30000008000000200"
@@ -86,6 +88,11 @@ def door_opened_at(time_stamp: int) -> bytes:
     return with_checksum(
         f"bb2d000020{time_stamp.to_bytes(4, 'little').hex()}030000000000000200"
     )
+
+
+def remote_operation(lock_state: int) -> bytes:
+    """Return a constructed LockOperation reply of DOOR_STATE_CHANGED, key_slot 0, and lock_state, from REMOTE_UNLOCKED."""
+    return with_checksum(f"bb2d00000000{lock_state:02x}0093aedd6a1f1719340200")
 
 
 def lock_operation(op_code: int) -> bytes:
@@ -107,9 +114,15 @@ CODE_ADDED_V2_SLOT_4 = with_checksum("bb2d00000a78563412040040e20100000200")
 CODE_DELETED_V2_SLOT_260 = with_checksum("bb2d00000b78563412040100000000000200")
 CREDENTIAL_ADDED_RF_SLOT_7 = with_checksum("bb2d00000c7856341201070013421f170200")
 CREDENTIAL_DELETED_RF_SLOT_7 = with_checksum("bb2d00000d7856341201070013421f170200")
+# CREDENTIAL_ADDED_RF_SLOT_7 with the lock locked.
+CREDENTIAL_ADDED_RF_SLOT_7_LOCKED = with_checksum(
+    "bb2d00000c7856341201070015421f170200"
+)
 TAMPER_DOOR_FORCED_OPEN = with_checksum("bb2d00000f78563412030000000000000200")
 BCM_TEST = with_checksum("bb2d00001078563412013c00102700000200")
 HOMEKEY_OPERATION = with_checksum("bb2d0000127856341203003aefbeadde0200")
+# HOMEKEY_OPERATION with the lock locked.
+HOMEKEY_OPERATION_LOCKED = with_checksum("bb2d0000127856341205003aefbeadde0200")
 DPS_INFO = with_checksum("bb2d00001378563412500000000000000200")
 BATTERY_INFO = with_checksum("bb2d00001578563412f816fb5a6401000200")
 LOCAL_EVENT_NOTIFICATION = with_checksum("bb2d00001678563412070000000000000200")

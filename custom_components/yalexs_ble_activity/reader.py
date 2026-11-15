@@ -20,6 +20,7 @@ from .const import (
     ATTR_NAME,
     ATTR_RAW,
     ATTR_SERIAL,
+    ATTR_SOURCE,
     CONF_LOCK_MODEL,
     DOMAIN,
     EVENT_LOG_RECORD,
@@ -183,6 +184,8 @@ class LogReader:
         self._line["serial"] += 1
         data[ATTR_SERIAL] = self._line["serial"]
         data[ATTR_EVENT_TYPE] = activity.event_type
+        if activity.source is not None:
+            data[ATTR_SOURCE] = activity.source
         context = Context()
         self._hass.bus.async_fire(
             EVENT_LOG_RECORD,

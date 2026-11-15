@@ -12,6 +12,7 @@ from .const import (
     ATTR_CURRENT_LOCK_STATE,
     ATTR_NAME,
     ATTR_SLOT,
+    ATTR_SOURCE,
     DOMAIN,
     EVENT_LOG_RECORD,
     EVENT_TYPE_CODE_ADDED,
@@ -20,9 +21,9 @@ from .const import (
     EVENT_TYPE_CODE_DELETED_V2,
     EVENT_TYPE_CREDENTIAL_ADDED,
     EVENT_TYPE_CREDENTIAL_DELETED,
-    EVENT_TYPE_MASTER_CODE,
     EVENT_TYPE_WORDS,
     LOCK_STATE_WORDS,
+    SOURCE_MASTER_CODE,
 )
 
 DEFAULT_NAME = "Yale Access Bluetooth lock"
@@ -59,20 +60,19 @@ def async_describe_events(
         device = device_registry.async_get(data[ATTR_DEVICE_ID])
         device_name = (device.name_by_user or device.name) if device else None
         event_type = data[ATTR_EVENT_TYPE]
-        message = EVENT_TYPE_WORDS.get(event_type, event_type)
+        source = data.get(ATTR_SOURCE)
+        words_key = source or event_type
+        message = EVENT_TYPE_WORDS.get(words_key, words_key)
         if (name := data.get(ATTR_NAME)) is not None:
             preposition = "for" if event_type in ADD_OR_DELETE_EVENT_TYPES else "by"
             message = f"{message} {preposition} {name}"
         # The master code's slot is the lock model's, not a user's.
         if (
             slot := data.get(ATTR_SLOT)
-        ) is not None and event_type != EVENT_TYPE_MASTER_CODE:
+        ) is not None and words_key != SOURCE_MASTER_CODE:
             message = f"{message} at slot {_slot_text(slot)}"
-        # The records of credential_added and credential_deleted hold the lock's
-        # state but record no operation.
-        if (
-            state := data.get(ATTR_CURRENT_LOCK_STATE)
-        ) is not None and event_type not in ADD_OR_DELETE_EVENT_TYPES:
+        if source is not None:
+            state = data[ATTR_CURRENT_LOCK_STATE]
             message = f"{LOCK_STATE_WORDS.get(state, state)} ({message})"
         return {
             LOGBOOK_ENTRY_NAME: device_name or DEFAULT_NAME,

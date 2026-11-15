@@ -98,23 +98,37 @@ async def test_the_logbook_describes_a_log_record_by_its_word_name_and_slot(
     ("data", "message"),
     [
         pytest.param(
-            {"event_type": "rf", "slot": 7, "current_lock_state": "unlocked"},
+            {
+                "event_type": "unlocked",
+                "source": "rf",
+                "slot": 7,
+                "current_lock_state": "unlocked",
+            },
             "unlocked (RF tag at slot 7)",
             id="rf",
         ),
         pytest.param(
-            {"event_type": "remote", "current_lock_state": "securemode"},
+            {
+                "event_type": "secured",
+                "source": "remote",
+                "current_lock_state": "securemode",
+            },
             "secured (remote)",
             id="securemode",
         ),
         pytest.param(
-            {"event_type": "auto_lock", "current_lock_state": "locked"},
+            {
+                "event_type": "locked",
+                "source": "auto_lock",
+                "current_lock_state": "locked",
+            },
             "locked (auto lock)",
             id="auto_lock",
         ),
         pytest.param(
             {
-                "event_type": "pin",
+                "event_type": "unlocked",
+                "source": "pin",
                 "slot": 15,
                 "name": "Guest",
                 "current_lock_state": "unlocked",
@@ -124,7 +138,8 @@ async def test_the_logbook_describes_a_log_record_by_its_word_name_and_slot(
         ),
         pytest.param(
             {
-                "event_type": "master_code",
+                "event_type": "locked",
+                "source": "master_code",
                 "slot": 0xFFEE,
                 "current_lock_state": "locked",
             },
@@ -147,19 +162,24 @@ async def test_the_logbook_describes_a_log_record_by_its_word_name_and_slot(
             id="add",
         ),
         pytest.param(
-            {"event_type": "rf", "slot": 7, "current_lock_state": "unknown_08"},
+            {
+                "event_type": "lock_state",
+                "source": "rf",
+                "slot": 7,
+                "current_lock_state": "unknown_08",
+            },
             "unknown_08 (RF tag at slot 7)",
             id="state_with_no_words",
         ),
     ],
 )
-async def test_the_logbook_line_leads_with_the_lock_state_but_for_an_add_or_a_delete(
+async def test_the_logbook_line_of_a_record_with_a_source_leads_with_the_lock_state(
     hass: HomeAssistant,
     loaded_entry: MockConfigEntry,
     data: dict[str, Any],
     message: str,
 ) -> None:
-    """A log record holding a lock state is described by the state's words, then its line in parentheses, unless it adds or deletes a code or a credential."""
+    """A log record with a source is described by its lock state's words, then the line of its source in parentheses, and a record with no source by its line alone."""
     device_id = activity_device(hass, loaded_entry).id
 
     description = _describer(hass)(

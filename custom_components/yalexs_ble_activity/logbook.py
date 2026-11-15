@@ -9,6 +9,7 @@ from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 
 from .const import (
+    ATTR_CURRENT_LOCK_STATE,
     ATTR_NAME,
     ATTR_SLOT,
     DOMAIN,
@@ -21,6 +22,7 @@ from .const import (
     EVENT_TYPE_CREDENTIAL_DELETED,
     EVENT_TYPE_MASTER_CODE,
     EVENT_TYPE_WORDS,
+    LOCK_STATE_WORDS,
 )
 
 DEFAULT_NAME = "Yale Access Bluetooth lock"
@@ -66,6 +68,12 @@ def async_describe_events(
             slot := data.get(ATTR_SLOT)
         ) is not None and event_type != EVENT_TYPE_MASTER_CODE:
             message = f"{message} at slot {_slot_text(slot)}"
+        # The records of credential_added and credential_deleted hold the lock's
+        # state but record no operation.
+        if (
+            state := data.get(ATTR_CURRENT_LOCK_STATE)
+        ) is not None and event_type not in ADD_OR_DELETE_EVENT_TYPES:
+            message = f"{LOCK_STATE_WORDS.get(state, state)} ({message})"
         return {
             LOGBOOK_ENTRY_NAME: device_name or DEFAULT_NAME,
             LOGBOOK_ENTRY_MESSAGE: message,

@@ -7,6 +7,7 @@ CONF_LOCK_MODEL = "lock_model"
 
 ATTR_TIMESTAMP = "timestamp"
 ATTR_BACKLOG = "backlog"
+ATTR_CURRENT_LOCK_STATE = "current_lock_state"
 ATTR_NAME = "name"
 ATTR_RAW = "raw"
 ATTR_SERIAL = "serial"
@@ -182,4 +183,26 @@ EVENT_TYPE_WORDS = {
     EVENT_TYPE_MATTER_MESSAGE: "Matter message",
     EVENT_TYPE_DIALOG_REBOOT: "dialog reboot",
     EVENT_TYPE_UNKNOWN_RECORD: "unknown record",
+}
+
+# The logbook words of each lock state, keyed by the LockStatus member's name in
+# lower case.
+LOCK_STATE_WORDS = {
+    "unknown": "lock state unknown",
+    "unknown_01": "calibrating",
+    "unlocking": "unlocking",
+    "unlocked": "unlocked",
+    "locking": "locking",
+    "locked": "locked",
+    "unknown_06": "polarity discovery",
+    "jammed": "jammed",
+    "unlatching": "unlatching",
+    "unlatched": "unlatched",
+    "integrated_other_system": "integrated other system",
+    "securemode": "secured",
+    "master_code_not_set": "master code not set",
+    "default_master_code_set": "default master code set",
+    "lock_not_handed": "lock not handed",
+    "shabbat_mode": "Shabbat mode",
+    "internal_forced_locked": "internal forced locked",
 }

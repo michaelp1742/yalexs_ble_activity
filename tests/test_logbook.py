@@ -94,13 +94,88 @@ async def test_the_logbook_describes_a_log_record_by_its_word_name_and_slot(
     assert description == {"name": TITLE, "message": message}
 
 
+@pytest.mark.parametrize(
+    ("data", "message"),
+    [
+        pytest.param(
+            {"event_type": "rf", "slot": 7, "current_lock_state": "unlocked"},
+            "unlocked (RF tag at slot 7)",
+            id="rf",
+        ),
+        pytest.param(
+            {"event_type": "remote", "current_lock_state": "securemode"},
+            "secured (remote)",
+            id="securemode",
+        ),
+        pytest.param(
+            {"event_type": "auto_lock", "current_lock_state": "locked"},
+            "locked (auto lock)",
+            id="auto_lock",
+        ),
+        pytest.param(
+            {
+                "event_type": "pin",
+                "slot": 15,
+                "name": "Guest",
+                "current_lock_state": "unlocked",
+            },
+            "unlocked (keypad code by Guest at slot 15)",
+            id="named_use",
+        ),
+        pytest.param(
+            {
+                "event_type": "master_code",
+                "slot": 0xFFEE,
+                "current_lock_state": "locked",
+            },
+            "locked (master code)",
+            id="master_code",
+        ),
+        pytest.param(
+            {"event_type": "credential_error", "current_lock_state": None},
+            "credential refused",
+            id="refused_credential",
+        ),
+        pytest.param(
+            {
+                "event_type": "credential_added",
+                "slot": 4,
+                "name": "Guest",
+                "current_lock_state": "locked",
+            },
+            "credential added for Guest at slot 4",
+            id="add",
+        ),
+        pytest.param(
+            {"event_type": "rf", "slot": 7, "current_lock_state": "unknown_08"},
+            "unknown_08 (RF tag at slot 7)",
+            id="state_with_no_words",
+        ),
+    ],
+)
+async def test_the_logbook_line_leads_with_the_lock_state_but_for_an_add_or_a_delete(
+    hass: HomeAssistant,
+    loaded_entry: MockConfigEntry,
+    data: dict[str, Any],
+    message: str,
+) -> None:
+    """A log record holding a lock state is described by the state's words, then its line in parentheses, unless it adds or deletes a code or a credential."""
+    device_id = activity_device(hass, loaded_entry).id
+
+    description = _describer(hass)(
+        Event(EVENT_LOG_RECORD, {**data, "device_id": device_id})
+    )
+
+    assert description == {"name": TITLE, "message": message}
+
+
 async def test_the_logbook_describes_a_fired_log_record_event(
     hass: HomeAssistant,
     owner_entry: MockConfigEntry,
     loaded_entry: MockConfigEntry,
     log_records: list[Event],
 ) -> None:
-    """The log record event the reader fires for a named CodeOperation is described by its name and slot."""
+    """The log record event the reader fires for a named CodeOperation is described by its lock state, then its name and slot."""
     await async_setup_platform(
         hass, "keypad", async_credential_name=Mock(return_value="Guest")
     )
@@ -110,7 +185,7 @@ async def test_the_logbook_describes_a_fired_log_record_event(
     (event,) = log_records
     assert _describer(hass)(event) == {
         "name": TITLE,
-        "message": "keypad code by Guest at slot 1",
+        "message": "unlocked (keypad code by Guest at slot 1)",
     }
 
 

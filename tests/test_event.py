@@ -21,6 +21,7 @@ from yalexs_ble import (
     CredentialAdded,
     KeypadInfo,
     LockCred,
+    LockStatus,
     LogRecord,
     OpCode,
     parse_log_event_packet,
@@ -32,6 +33,7 @@ from custom_components.yalexs_ble_activity.const import (
     EVENT_LOG_RECORD,
     EVENT_TYPE_WORDS,
     EVENT_TYPES,
+    LOCK_STATE_WORDS,
 )
 from custom_components.yalexs_ble_activity.models import LOCK_MODELS
 from homeassistant.components.automation import DOMAIN as AUTOMATION_DOMAIN
@@ -1156,8 +1158,8 @@ def test_event_types_lists_each_type_once_in_the_table_order() -> None:
     assert len(set(EVENT_TYPES)) == len(EVENT_TYPES)
 
 
-def test_translations_name_each_event_type_and_no_other() -> None:
-    """The translations hold a state name for each event type and for no other, and each type's logbook words equal its state name, less any " (v2)" suffix, but for the first letter's case."""
+def test_translations_and_words_name_each_event_type_and_lock_state() -> None:
+    """The translations hold a state name for each event type and for no other, each type's logbook words equal its state name, less any " (v2)" suffix, but for the first letter's case, and each LockStatus member has logbook words under its name in lower case."""
     translations = json.loads(
         (
             Path(__file__).parents[1]
@@ -1180,3 +1182,4 @@ def test_translations_name_each_event_type_and_no_other() -> None:
         event_type: state_name.removesuffix(" (v2)")
         for event_type, state_name in words.items()
     }
+    assert LOCK_STATE_WORDS.keys() == {status.name.lower() for status in LockStatus}

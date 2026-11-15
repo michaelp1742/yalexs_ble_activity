@@ -29,10 +29,11 @@ CLOCK_ERRORS = (TimeoutError, RuntimeError, YaleXSBLEError, BleakError)
 # A clock whose whole window lies more than this many seconds off is set in one
 # write.
 SET_LIMIT = 10
-# A reading whose reply came longer than this many seconds after its request is no
-# sample: its window is 1 s plus the round trip wide. In testing the round trip
-# was 0.23 to 0.68 s, and 0.4 s kept 65 of 68 readings.
-MAX_SAMPLE_ROUND_TRIP = 0.4
+# A reading whose reply came this many seconds or more after its request is no
+# sample: its window is 1 s plus the round trip wide. Over a 72 h test the median
+# round trip of a GetLog was 0.36 s, and 809 of 839 GetLogs and all 22 clock reads
+# had a round trip under 0.5 s.
+MAX_SAMPLE_ROUND_TRIP = 0.5
 # With no sample for this long, the clock is read.
 QUIET_TIME = 6 * 3600
 
@@ -51,7 +52,7 @@ class Window(NamedTuple):
 
 def _sample_window(lock_time: int, times: ExchangeTimes) -> Window | None:
     """Return the window of a reading of the lock's second lock_time, or None when its reply was too slow."""
-    if times.reply_received - times.request_written > MAX_SAMPLE_ROUND_TRIP:
+    if times.reply_received - times.request_written >= MAX_SAMPLE_ROUND_TRIP:
         return None
     # The lock read its clock between the request's write and its reply.
     return Window(
@@ -239,7 +240,7 @@ class LockClock:
         # the write, which is not established; a sample that misses it logs the miss.
         self._estimate = (
             Window(offset - round_trip, offset)
-            if round_trip <= MAX_SAMPLE_ROUND_TRIP
+            if round_trip < MAX_SAMPLE_ROUND_TRIP
             else None
         )
         self._estimate_from_write = True

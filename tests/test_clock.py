@@ -97,7 +97,7 @@ async def _async_drain(
             id="12_s_ahead",
         ),
         pytest.param(-8, 0.3, [], [], id="8_s_behind"),
-        pytest.param(-12, 0.45, [], [], id="12_s_behind_slow_reply"),
+        pytest.param(-12, 0.55, [], [], id="12_s_behind_slow_reply"),
     ],
 )
 async def test_setup_sets_a_clock_more_than_10_s_off_before_the_reader(
@@ -152,7 +152,10 @@ async def test_setup_sets_a_clock_more_than_10_s_off_before_the_reader(
             [f"{TITLE} clock 15.3 to 16.6 s ahead; {SET}"],
             id="set_ahead",
         ),
-        pytest.param(NOW_TIME - 1, 0.45, [], [], id="slow_reply"),
+        pytest.param(NOW_TIME - 1, 0.55, [], [], id="slow_reply"),
+        pytest.param(
+            NOW_TIME - 1, MAX_SAMPLE_ROUND_TRIP, [], [], id="reply_at_max_round_trip"
+        ),
     ],
 )
 async def test_a_drain_sample_orders_a_write_in_a_task(
@@ -357,7 +360,8 @@ async def _async_step_to_1_65_s_behind(
     ("write_round_trip", "writes"),
     [
         pytest.param(0.35, [-1.65, -1.0], id="write_window"),
-        pytest.param(0.5, [-1.65], id="slow_write_leaves_no_window"),
+        pytest.param(0.55, [-1.65], id="slow_write_leaves_no_window"),
+        pytest.param(MAX_SAMPLE_ROUND_TRIP, [-1.65], id="write_at_max_round_trip"),
     ],
 )
 async def test_a_write_starts_the_estimate_from_its_offset_less_its_round_trip(
@@ -368,7 +372,7 @@ async def test_a_write_starts_the_estimate_from_its_offset_less_its_round_trip(
     write_round_trip: float,
     writes: list[float],
 ) -> None:
-    """A write with offset -1.65 and a 0.35 s round trip starts the estimate (-2.00, -1.65], which narrows a sample of (-2.00, -1.00] to step, and one slower than MAX_SAMPLE_ROUND_TRIP leaves the sample alone, too wide to step."""
+    """A write with offset -1.65 and a 0.35 s round trip starts the estimate (-2.00, -1.65], which narrows a sample of (-2.00, -1.00] to step, and a write whose round trip is MAX_SAMPLE_ROUND_TRIP or longer starts no estimate, so the sample alone is too wide to step."""
     lock = owner_entry.runtime_data.lock
     lock.set_rtc.side_effect = lambda offset: times_now(write_round_trip)
 

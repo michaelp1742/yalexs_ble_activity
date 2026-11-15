@@ -71,9 +71,13 @@ def _set_offset(window: Window) -> float | None:
 
 def _step_offset(window: Window) -> float | None:
     """Return the offset that moves the clock up to 1 s toward Home Assistant's time without crossing it, or None."""
-    if window.high <= 0 and window.low + 1 <= 0:
+    if window.high - window.low >= 1 - MAX_SAMPLE_ROUND_TRIP:
+        # On a narrower estimate a step moves the clock more than MAX_SAMPLE_ROUND_TRIP
+        # toward zero, so a write that lands up to that late still moves it closer.
+        return None
+    if window.low + 1 <= 0:
         return window.low + 1
-    if window.low >= 0 and window.high - 1 >= MAX_SAMPLE_ROUND_TRIP:
+    if window.high - 1 >= MAX_SAMPLE_ROUND_TRIP:
         return window.high - 1
     return None
 

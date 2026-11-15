@@ -1,5 +1,6 @@
 """Tests for the Yale Access Bluetooth Activity integration."""
 
+from collections.abc import Callable
 from datetime import timedelta
 import time
 from typing import Any
@@ -13,7 +14,7 @@ from pytest_homeassistant_custom_component.common import (
     mock_integration,
     mock_platform,
 )
-from yalexs_ble import ExchangeTimes, LogRead, StatusReply
+from yalexs_ble import ExchangeTimes, LogRead, RtcWrite, StatusReply
 
 from custom_components.yalexs_ble_activity.const import DOMAIN, OWNER_DOMAIN
 from homeassistant.const import CONF_ADDRESS, Platform
@@ -171,6 +172,21 @@ def times_now(round_trip: float = 0.0) -> ExchangeTimes:
 def status_reply(value: int, round_trip: float = 0.0) -> StatusReply:
     """Return a status read of value whose reply arrives now."""
     return StatusReply(value, times_now(round_trip))
+
+
+def rtc_write(offset: float = 0.0, round_trip: float = 0.0) -> RtcWrite:
+    """Return a clock write of the request's time plus offset seconds, whose reply arrives now, round_trip seconds after its request."""
+    times = times_now(round_trip)
+    return RtcWrite(int(times.request_written + offset), times)
+
+
+def set_rtc_answering(round_trip: float = 0.0) -> Callable[..., RtcWrite]:
+    """Return a set_rtc stand-in with the library's signature, each write's reply arriving round_trip seconds after its request."""
+
+    def _set_rtc(*, offset: float = 0.0, timestamp: int | None = None) -> RtcWrite:
+        return rtc_write(offset, round_trip)
+
+    return _set_rtc
 
 
 async def async_deliver(

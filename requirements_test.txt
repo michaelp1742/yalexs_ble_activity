@@ -1,6 +1,6 @@
 pytest-homeassistant-custom-component==0.13.375
 # The yalexs-ble requirement is this commit of the local clone's local-build
 # branch, so it resolves only on this machine.
-yalexs-ble @ git+file:///home/michael/projects/home-assistant/yalexs-ble@80489bb8dd6efd15c8c4d85567c5a639427831d2
+yalexs-ble @ git+file:///home/michael/projects/home-assistant/yalexs-ble@748aeef83bc26f198ec09da9577f8d75db663fc2
 mypy==2.4.0
 pre-commit==4.2.0

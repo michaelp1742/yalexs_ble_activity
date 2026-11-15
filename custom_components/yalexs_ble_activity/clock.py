@@ -225,7 +225,7 @@ class LockClock:
     async def _async_write(self, window: Window, offset: float) -> None:
         """Set the lock's clock offset seconds from Home Assistant's, start the estimate from the write, and log the window found."""
         try:
-            times = await self._lock.set_rtc(offset)
+            write = await self._lock.set_rtc(offset=offset)
         except CLOCK_ERRORS as err:
             _LOGGER.debug("%s clock not set: %s", self._entry.title, err)
             # The write may have reached the lock.
@@ -233,6 +233,7 @@ class LockClock:
             return
         finally:
             self._writing = False
+        times = write.times
         self._write_reply_time = times.reply_received
         round_trip = times.reply_received - times.request_written
         # The lock applied the write between its request and its reply, so it lands

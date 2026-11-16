@@ -22,8 +22,8 @@ from . import (
     async_advance,
     async_deliver,
     rtc_write,
-    set_rtc_answering,
     status_reply,
+    sync_rtc_answering,
     with_checksum,
 )
 
@@ -120,10 +120,10 @@ async def test_setup_sets_a_clock_more_than_10_s_off_before_the_reader(
     assert await hass.config_entries.async_setup(config_entry.entry_id)
 
     assert lock.get_status.call_args_list == [call(StatusType.RTC)]
-    assert lock.set_rtc.call_args_list == writes
+    assert lock.sync_rtc.call_args_list == writes
     assert [name for name, _, _ in lock.mock_calls] == [
         "get_status",
-        *(["set_rtc"] * len(writes)),
+        *(["sync_rtc"] * len(writes)),
         "register_log_record_callback",
     ]
     assert _lines(caplog, logging.INFO) == info
@@ -178,13 +178,11 @@ async def test_a_drain_sample_orders_a_write_in_a_task(
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     release = asyncio.Event()
 
-    async def _async_set_rtc(
-        *, offset: float = 0.0, timestamp: int | None = None
-    ) -> RtcWrite:
+    async def _async_sync_rtc(*, offset: float = 0.0) -> RtcWrite:
         await release.wait()
         return rtc_write(offset, 0.3)
 
-    lock.set_rtc.side_effect = _async_set_rtc
+    lock.sync_rtc.side_effect = _async_sync_rtc
 
     await async_advance(hass, freezer, 0.7)
     await async_deliver(owner_entry, CODE_OPERATION_SLOT_1, round_trip=round_trip)
@@ -192,7 +190,7 @@ async def test_a_drain_sample_orders_a_write_in_a_task(
     await hass.async_block_till_done()
 
     # The reader returned while the write still waits for the lock.
-    assert lock.set_rtc.call_args_list == writes
+    assert lock.sync_rtc.call_args_list == writes
     assert _lines(caplog, logging.INFO) == []
     release.set()
     await hass.async_block_till_done()
@@ -249,7 +247,7 @@ async def test_a_step_waits_for_an_estimate_narrower_than_1_s_less_max_round_tri
     caplog.clear()
     await _async_drain(hass, freezer, owner_entry, later_cleared_time)
 
-    lock.set_rtc.assert_not_called()
+    lock.sync_rtc.assert_not_called()
     assert _lines(caplog, logging.DEBUG) == [
         f"{TITLE} clock sample {miss} with no write before it; "
         "the estimate starts again from the sample"
@@ -270,11 +268,11 @@ async def test_each_sample_narrows_the_estimate(
 
     await async_advance(hass, freezer, 0.65)
     await _async_drain(hass, freezer, owner_entry, NOW_TIME - 2, round_trip=0.35)
-    lock.set_rtc.assert_not_called()
+    lock.sync_rtc.assert_not_called()
     await async_advance(hass, freezer, 0.05)
     await _async_drain(hass, freezer, owner_entry, NOW_TIME)
 
-    assert lock.set_rtc.call_args_list == [call(offset=pytest.approx(-0.7))]
+    assert lock.sync_rtc.call_args_list == [call(offset=pytest.approx(-0.7))]
     assert _lines(caplog, logging.INFO) == [
         f"{TITLE} clock 1.7 to 1.3 s behind; {STEP}"
     ]
@@ -299,7 +297,7 @@ async def test_a_sample_outside_the_estimate_starts_it_again(
     await async_advance(hass, freezer, 0.8)
     await _async_drain(hass, freezer, owner_entry, NOW_TIME + 1)
 
-    lock.set_rtc.assert_not_called()
+    lock.sync_rtc.assert_not_called()
     assert _lines(caplog, logging.DEBUG) == [
         f"{TITLE} clock sample -1.10 to 0.25 s misses the estimate -2.65 to -1.30 s "
         "with no write before it; the estimate starts again from the sample"
@@ -332,7 +330,7 @@ async def test_a_lock_ahead_steps_toward_zero_and_stays_ahead(
     lock.get_status.side_effect = read_at(
         NOW_TIME + 1, NOW_TIME + request_written, NOW_TIME + reply_received
     )
-    lock.set_rtc.side_effect = set_rtc_answering(0.2)
+    lock.sync_rtc.side_effect = sync_rtc_answering(0.2)
     assert await hass.config_entries.async_setup(config_entry.entry_id)
 
     await async_advance(hass, freezer, elapsed)
@@ -340,7 +338,7 @@ async def test_a_lock_ahead_steps_toward_zero_and_stays_ahead(
     await async_advance(hass, freezer, 0.6)
     await _async_drain(hass, freezer, owner_entry, NOW_TIME + 2)
 
-    assert lock.set_rtc.call_args_list == [call(offset=pytest.approx(step_offset))]
+    assert lock.sync_rtc.call_args_list == [call(offset=pytest.approx(step_offset))]
     assert _lines(caplog, logging.INFO) == [f"{TITLE} clock {window} s ahead; {STEP}"]
 
 
@@ -377,13 +375,13 @@ async def test_a_write_starts_the_estimate_from_its_offset_less_its_round_trip(
 ) -> None:
     """A write with offset -1.65 and a 0.35 s round trip starts the estimate (-2.00, -1.65], which narrows a sample of (-2.00, -1.00] to step, and a write whose round trip is MAX_SAMPLE_ROUND_TRIP or longer starts no estimate, so the sample alone is too wide to step."""
     lock = owner_entry.runtime_data.lock
-    lock.set_rtc.side_effect = set_rtc_answering(write_round_trip)
+    lock.sync_rtc.side_effect = sync_rtc_answering(write_round_trip)
 
     await _async_step_to_1_65_s_behind(hass, freezer, owner_entry, config_entry)
     await async_advance(hass, freezer, 0.35)
     await _async_drain(hass, freezer, owner_entry, NOW_TIME)
 
-    assert lock.set_rtc.call_args_list == [
+    assert lock.sync_rtc.call_args_list == [
         call(offset=pytest.approx(offset)) for offset in writes
     ]
 
@@ -397,7 +395,7 @@ async def test_a_sample_outside_a_writes_window_names_the_write(
 ) -> None:
     """A sample of (-0.65, 0.35] after a write's window of (-2.00, -1.65] logs that the estimate was set by a write."""
     caplog.set_level(logging.DEBUG, logger=LOGGER)
-    owner_entry.runtime_data.lock.set_rtc.side_effect = set_rtc_answering(0.35)
+    owner_entry.runtime_data.lock.sync_rtc.side_effect = sync_rtc_answering(0.35)
 
     await _async_step_to_1_65_s_behind(hass, freezer, owner_entry, config_entry)
     caplog.clear()
@@ -423,13 +421,11 @@ async def test_a_read_during_a_write_or_before_its_reply_is_no_sample(
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     release = asyncio.Event()
 
-    async def _async_set_rtc(
-        *, offset: float = 0.0, timestamp: int | None = None
-    ) -> RtcWrite:
+    async def _async_sync_rtc(*, offset: float = 0.0) -> RtcWrite:
         await release.wait()
         return rtc_write(offset, 0.3)
 
-    lock.set_rtc.side_effect = _async_set_rtc
+    lock.sync_rtc.side_effect = _async_sync_rtc
 
     # (-2.62, -1.30] narrows the setup read's (-3.62, -2.32] to (-2.62, -2.32].
     await async_advance(hass, freezer, 0.62)
@@ -446,11 +442,11 @@ async def test_a_read_during_a_write_or_before_its_reply_is_no_sample(
     await async_deliver(owner_entry, CODE_OPERATION_SLOT_1, round_trip=0.35)
     await async_deliver(owner_entry, end_of_log_at(NOW_TIME - 1))
     await async_advance(hass, freezer, 1)
-    assert lock.set_rtc.call_args_list == [call(offset=pytest.approx(-1.62))]
+    assert lock.sync_rtc.call_args_list == [call(offset=pytest.approx(-1.62))]
 
     # (-2.42, -1.42] meets the write's (-1.92, -1.62].
     await _async_drain(hass, freezer, owner_entry, NOW_TIME)
-    assert lock.set_rtc.call_args_list == [
+    assert lock.sync_rtc.call_args_list == [
         call(offset=pytest.approx(-1.62)),
         call(offset=pytest.approx(-0.92)),
     ]
@@ -470,9 +466,9 @@ async def test_a_drain_that_read_nothing_is_no_sample(
     await async_deliver(owner_entry, end_of_log_at(NOW_TIME + 15))
     await async_advance(hass, freezer, 2)
 
-    lock.set_rtc.assert_not_called()
+    lock.sync_rtc.assert_not_called()
     await _async_drain(hass, freezer, owner_entry, NOW_TIME + 18)
-    lock.set_rtc.assert_called_once_with(offset=MAX_SAMPLE_ROUND_TRIP)
+    lock.sync_rtc.assert_called_once_with(offset=MAX_SAMPLE_ROUND_TRIP)
 
 
 @pytest.mark.usefixtures("loaded_entry")
@@ -491,7 +487,7 @@ async def test_a_get_log_error_with_the_dirty_bit_set_is_no_sample(
     await async_deliver(owner_entry, end_of_log_at(NOW_TIME + 3))
     await async_advance(hass, freezer, 1)
 
-    lock.set_rtc.assert_not_called()
+    lock.sync_rtc.assert_not_called()
     assert _lines(caplog, logging.DEBUG) == [
         f"{TITLE} clock sample 3.00 to 4.00 s misses the estimate 0.00 to 1.00 s "
         "with no write before it; the estimate starts again from the sample"
@@ -515,7 +511,7 @@ async def test_a_quiet_lock_is_read_6_h_after_the_last_sample(
     await async_advance(hass, freezer, 1)
 
     assert lock.get_status.call_args_list == [call(StatusType.RTC)] * 2
-    lock.set_rtc.assert_called_once_with(offset=MAX_SAMPLE_ROUND_TRIP)
+    lock.sync_rtc.assert_called_once_with(offset=MAX_SAMPLE_ROUND_TRIP)
     await async_advance(hass, freezer, SIX_HOURS)
     assert lock.get_status.call_count == 3
 
@@ -532,21 +528,21 @@ async def test_a_failed_read_or_write_logs_at_debug_and_the_records_still_fire(
     caplog.set_level(logging.DEBUG, logger=LOGGER)
     lock = owner_entry.runtime_data.lock
     lock.get_status.side_effect = TimeoutError("lock did not answer get_status 0x0A")
-    lock.set_rtc.side_effect = TimeoutError("lock did not answer set_rtc")
+    lock.sync_rtc.side_effect = TimeoutError("lock did not answer sync_rtc")
 
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
     await _async_drain(hass, freezer, owner_entry, NOW_TIME + 15)
-    lock.set_rtc.side_effect = set_rtc_answering(0.3)
+    lock.sync_rtc.side_effect = sync_rtc_answering(0.3)
     # (17, 18] would miss the first sample's (15, 16], but the failed write cleared it.
     await _async_drain(hass, freezer, owner_entry, NOW_TIME + 18)
 
     assert _lines(caplog, logging.DEBUG) == [
         f"{TITLE} clock not read: lock did not answer get_status 0x0A",
-        f"{TITLE} clock not set: lock did not answer set_rtc",
+        f"{TITLE} clock not set: lock did not answer sync_rtc",
     ]
     assert [event.data["serial"] for event in log_records] == [1, 2]
-    assert lock.set_rtc.call_args_list == [call(offset=MAX_SAMPLE_ROUND_TRIP)] * 2
+    assert lock.sync_rtc.call_args_list == [call(offset=MAX_SAMPLE_ROUND_TRIP)] * 2
     assert _lines(caplog, logging.INFO) == [
         f"{TITLE} clock 17.0 to 18.0 s ahead; {SET}"
     ]
@@ -579,4 +575,4 @@ async def test_a_failed_read_of_a_quiet_lock_is_tried_again_6_h_later(
     await async_advance(hass, freezer, SIX_HOURS)
 
     assert lock.get_status.call_count == 3
-    lock.set_rtc.assert_not_called()
+    lock.sync_rtc.assert_not_called()

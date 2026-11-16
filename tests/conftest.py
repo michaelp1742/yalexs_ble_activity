@@ -33,9 +33,9 @@ from . import (
     ADDRESS,
     TITLE,
     async_setup_owner,
-    set_rtc_answering,
     status_reply,
     store_key,
+    sync_rtc_answering,
 )
 
 
@@ -49,7 +49,7 @@ async def _async_setup_owner_entry(hass: HomeAssistant, entry: ConfigEntry) -> b
     lock = create_autospec(PushLock, instance=True, address=entry.data[CONF_ADDRESS])
     # The lock's clock shows Home Assistant's time, so setup writes nothing.
     lock.get_status.side_effect = lambda status_type: status_reply(int(time.time()))
-    lock.set_rtc.side_effect = set_rtc_answering()
+    lock.sync_rtc.side_effect = sync_rtc_answering()
     entry.runtime_data = Mock(lock=lock)
     return True
 

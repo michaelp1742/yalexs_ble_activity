@@ -180,13 +180,13 @@ def rtc_write(offset: float = 0.0, round_trip: float = 0.0) -> RtcWrite:
     return RtcWrite(int(times.request_written + offset), times)
 
 
-def set_rtc_answering(round_trip: float = 0.0) -> Callable[..., RtcWrite]:
-    """Return a set_rtc stand-in with the library's signature, each write's reply arriving round_trip seconds after its request."""
+def sync_rtc_answering(round_trip: float = 0.0) -> Callable[..., RtcWrite]:
+    """Return a sync_rtc stand-in with the library's signature, each write's reply arriving round_trip seconds after its request."""
 
-    def _set_rtc(*, offset: float = 0.0, timestamp: int | None = None) -> RtcWrite:
+    def _sync_rtc(*, offset: float = 0.0) -> RtcWrite:
         return rtc_write(offset, round_trip)
 
-    return _set_rtc
+    return _sync_rtc
 
 
 async def async_deliver(

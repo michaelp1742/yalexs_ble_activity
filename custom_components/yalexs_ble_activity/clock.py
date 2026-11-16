@@ -225,7 +225,7 @@ class LockClock:
     async def _async_write(self, window: Window, offset: float) -> None:
         """Set the lock's clock offset seconds from Home Assistant's, start the estimate from the write, and log the window found."""
         try:
-            write = await self._lock.set_rtc(offset=offset)
+            write = await self._lock.sync_rtc(offset=offset)
         except CLOCK_ERRORS as err:
             _LOGGER.debug("%s clock not set: %s", self._entry.title, err)
             # The write may have reached the lock.

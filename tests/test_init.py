@@ -80,7 +80,7 @@ async def test_option_off_leaves_entry_idle(
     assert Platform.EVENT not in hass.config.components
     lock.register_log_record_callback.assert_not_called()
     lock.get_status.assert_not_called()
-    lock.set_rtc.assert_not_called()
+    lock.sync_rtc.assert_not_called()
     assert (
         dr.async_entries_for_config_entry(device_registry, config_entry.entry_id) == []
     )

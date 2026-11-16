@@ -4,12 +4,13 @@ A parallel integration to `yalexs_ble`, Home Assistant's
 [Yale Access Bluetooth](https://www.home-assistant.io/integrations/yalexs_ble/) integration. It shows the lock's own
 log in a logbook of its own: each record Home Assistant reads off the lock is one line in the logbook of this
 integration's device, at the time the lock wrote the record, in the lock's order, such as "Front Door unlocked
-(keypad code by Guest at slot 15)". Each record also fires an event for automations, whose type names the source of a
-credential's use or of a lock operation (a keypad code, the master code, an RF tag, the keypad's button, the inside
-button, a command over Bluetooth, the lock's own relock), or the kind of any other record (a door opened, a code added,
-the keypad's info). The integration keeps the lock's clock in step with Home Assistant's. It reads the records
-through Yale Access Bluetooth's connection to the lock and changes nothing in that integration. It has no PIN actions,
-changes no setting on the lock but its clock, and stores no names.
+(keypad code by Guest at slot 15)". Each record also fires an event for automations. The record of a lock operation, of
+a credential's use, or of a Home Key operation has the lock's state as its type, such as locked or unlocked, and what
+caused it as its source (a keypad code, the master code, an RF tag, the keypad's button, the inside button, a command
+over Bluetooth, the lock's own relock); any other record has the type of its kind (a door opened, a code added, the
+keypad's info). The integration keeps the lock's clock in step with Home Assistant's. It reads the records through Yale
+Access Bluetooth's connection to the lock and changes nothing in that integration. It has no PIN actions, changes no
+setting on the lock but its clock, and stores no names.
 
 ## Requirements
 
@@ -90,13 +91,13 @@ line per record, in the order the lock wrote them:
 - "Front Door code added for Guest at slot 4", an addition or a deletion;
 - "Front Door keypad info", "Front Door door opened", and so on for every other record.
 
-The line is the device's name and the record's words: the type's words, the name where one is known, and the slot where
-the record has one, but for the master code, whose slot is the model's. The record of a lock operation or of a
-credential's use holds the lock's state after it, and its line has that state, such as "unlocked", "locked", or
-"secured", before the record's words, which are then in parentheses. The record of a credential added or deleted holds
-the lock's state too but records no operation, so its line has no state, and neither has the line of a code added or
-deleted, a door change, a refused credential, or the keypad's info. A slot above `0xFF` is written in hexadecimal: a
-code added at the master code slot reads "code added at slot 0xFFEE".
+The line is the device's name and the record's words: the words of its source or of its type, the name where one is
+known, and the slot where the record has one, but for the master code, whose slot is the model's. The record of a lock
+operation, of a credential's use, or of a Home Key operation holds the lock's state after it, and its line has that
+state, such as "unlocked", "locked", or "secured", before the record's words, which are then in parentheses. The record
+of a credential added or deleted holds the lock's state too but records no operation, so its line has no state, and
+neither has the line of a code added or deleted, a door change, a refused credential, or the keypad's info. A slot above
+`0xFF` is written in hexadecimal: a code added at the master code slot reads "code added at slot 0xFFEE".
 
 Each line is placed at the record's own time, the lock's clock when it wrote the record, not the time Home Assistant
 read it. A keypad code entered before the lock relocked sits before the relock's line, whenever the two were read, and
@@ -111,52 +112,66 @@ number are kept across restarts.
 
 ## The events
 
-Each record placed in the logbook fires the event `yalexs_ble_activity_log_record`. Its `event_type` names the
-record. A credential's use and a lock operation have the type of their source:
+Each record placed in the logbook fires the event `yalexs_ble_activity_log_record`, with the record's type in
+`event_type`.
 
-| Event type | Logbook | Record |
+The record of a lock operation, of a credential's use, or of a Home Key operation has the lock's state after it as its
+type, and what caused it in `source`:
+
+| Event type | `current_lock_state` |
+|---|---|
+| `locked` | `locked` |
+| `unlocked` | `unlocked` |
+| `secured` | `securemode` |
+| `unlatched` | `unlatched` |
+| `jammed` | `jammed` |
+| `lock_state` | any other state |
+
+| Source | Logbook | Record |
 |---|---|---|
 | `pin` | keypad code | a keypad code, at any slot but the model's master code slot |
 | `master_code` | master code | a keypad code at the model's master code slot |
 | `rf` | RF tag | an RF tag |
 | `finger`, `face`, `palm`, `aliro` | fingerprint, face, palm, Aliro | a credential of that type |
 | `credential` | credential | a credential of another type |
-| `credential_error` | credential refused | a credential the lock refused |
 | `keypad_button` | keypad button | the keypad's Yale button |
 | `remote` | remote | a command over Bluetooth, such as from the Yale Home app or from Home Assistant |
 | `manual` | manual | the inside button, or the lock turned by hand |
 | `auto_lock` | auto lock | the lock's own relock |
+| `homekey_operation` | Home Key operation | a Home Key operation |
 | `lock_operation` | lock operation | a lock operation whose op code the library does not name |
 
-A lock operation of another kind has its own type: `knock_received`, `bluetooth_received`, `anomaly`, `auto_retry`,
+A lock operation of another kind has its own source: `knock_received`, `bluetooth_received`, `anomaly`, `auto_retry`,
 `over_temp`, `burn_in`, `home_kit`, `z_wave`, `door_sense`, `low_bat_auto_unlock`, `escape_unlock`, `uwb`,
 `external_module_operation`, `shabbat_mode`, `scheduled_operation`, `matter`, `double_press`, `aliro_operation`, and
 `undefined`.
 
-Every other record has the type of its kind: `door_opened`, `door_closed`, `door_ajar`, `door_state_changed`,
+A credential the lock refused is `credential_error`, "credential refused" in the logbook, and its record holds no lock
+state. Every other record has the type of its kind: `door_opened`, `door_closed`, `door_ajar`, `door_state_changed`,
 `code_added`, `code_deleted`, `code_added_v2`, `code_deleted_v2`, `credential_added`, `credential_deleted`,
 `keypad_open`, `keypad_wrong_code`, `keypad_close`, `keypad_info`, `all_codes_deleted`, `factory_reset`, `tamper`,
-`bcm_test`, `homekey_operation`, `dps_info`, `battery_info`, `local_event_notification`, `product_message`,
-`matter_message`, and `dialog_reboot`. A record that Yale's numbering does not decode is `unknown_record`. The lock's
-answer when no record is unread is no record. The `code_added_v2` and `code_deleted_v2` lines read "code added" and
-"code deleted"; the version is the record's format.
+`bcm_test`, `dps_info`, `battery_info`, `local_event_notification`, `product_message`, `matter_message`, and
+`dialog_reboot`. A record that Yale's numbering does not decode is `unknown_record`. None of these has a `source`. The
+lock's answer when no record is unread is no record. The `code_added_v2` and `code_deleted_v2` lines read "code added"
+and "code deleted"; the version is the record's format.
 
-On the locks tested, a keypad code the lock accepts writes two records, the keypad's info and then the code, so it
-gives `keypad_info` and then `pin`, or `master_code` at the master code slot. A `keypad_info` alone is an entry the
-lock did not act on, such as an invalid code or a key pressed without a code; an invalid code has also left no record.
-A fingerprint at the Yale Smart Keypad 2 - Fingerprint is recorded as a code at the slot of the PIN associated with
-it, a lock slot of its own, so it gives `pin`, and its line names that slot, for example "unlocked (keypad code at slot
-9)". Nothing in the record says the slot is a fingerprint, so the line reads as a keypad code, and it has a name only
-when a credential integration names that slot.
+On the locks tested, a keypad code the lock accepts writes two records, the keypad's info and then the code, so it gives
+`keypad_info` and then the lock's state with the source `pin`, or `master_code` at the master code slot. A `keypad_info`
+alone is an entry the lock did not act on, such as an invalid code or a key pressed without a code; an invalid code has
+also left no record. A fingerprint at the Yale Smart Keypad 2 - Fingerprint is recorded as a code at the slot of the PIN
+associated with it, a lock slot of its own, so its source is `pin`, and its line names that slot, for example "unlocked
+(keypad code at slot 9)". Nothing in the record says the slot is a fingerprint, so the line reads as a keypad code, and
+it has a name only when a credential integration names that slot.
 
-An unlock from the Yale Home app is a `remote` record when Home Assistant reads it. While the app is connected to the
-lock, it can read the record first, and the unlock then gives nothing here.
+An unlock from the Yale Home app is an `unlocked` record with the source `remote` when Home Assistant reads it. While
+the app is connected to the lock, it can read the record first, and the unlock then gives nothing here.
 
 ### The event's data
 
 | Key | Value |
 |---|---|
 | `event_type` | the type above |
+| `source` | on the record of a lock operation, of a credential's use, or of a Home Key operation, its source above; absent on every other record |
 | `serial` | one more than the previous record's for the lock, kept across restarts: the order read |
 | `timestamp` | the lock's time of the record, in UTC, to the second; absent on a record with no decoded time |
 | `backlog` | `true` for a record that was unread on the lock when the reads began, such as one written while Home Assistant was down |
@@ -183,15 +198,16 @@ the ones flagged `backlog`; a record that integration read before this entry reg
 
 ### Automations
 
-An automation triggers on the event, with the record's type in `event_data`, and reads the name from the event's
-data:
+An automation triggers on the event, with the record's type and source in `event_data`, and reads the name from the
+event's data:
 
 ```yaml
 triggers:
   - trigger: event
     event_type: yalexs_ble_activity_log_record
     event_data:
-      event_type: pin
+      event_type: unlocked
+      source: pin
 conditions:
   - condition: template
     value_template: "{{ trigger.event.data.name == 'Michael' and not trigger.event.data.backlog }}"
@@ -205,6 +221,46 @@ The device also has the event entity **Activity**, for example `event.front_door
 Enabled, it fires an entity event for each record placed in the logbook, with the same data but `device_id`, for
 automations on `event.received`. Its time is Home Assistant's time when the record fires, not the record's own time, so
 its lines join the device's logbook at those times, beside the records' lines.
+
+The device page's Events card shows the entity's latest event by its type, such as "Unlocked", "Locked", or "Secured".
+An automation on the lock's state and its cause triggers on the state types and reads the cause from the entity's
+attributes:
+
+```yaml
+alias: Front Door lock state and cause
+description: >-
+  Runs on each Front Door activity record that holds a lock state, with the
+  state the lock reported and what caused it.
+mode: queued
+triggers:
+  - trigger: event.received
+    target:
+      entity_id: event.front_door_activity
+    options:
+      event_type:
+        - locked
+        - unlocked
+        - secured
+actions:
+  - variables:
+      lock_state: "{{ trigger.to_state.attributes.event_type }}"
+      cause: "{{ trigger.to_state.attributes.source }}"
+      who: "{{ trigger.to_state.attributes.get('name') }}"
+      slot: "{{ trigger.to_state.attributes.get('slot') }}"
+      backlog: "{{ trigger.to_state.attributes.backlog }}"
+  - action: notify.persistent_notification
+    data:
+      title: "Front Door {{ lock_state }}"
+      message: >-
+        {{ cause }}{{ ' by ' ~ who if who }}{{ ' at slot ' ~ slot if slot is not none }}
+```
+
+An automation on one cause adds a state condition on the attribute `source`, for example `rf`. The trigger lists three
+of the six state types; an automation that should also run on `unlatched`, `jammed`, or `lock_state` lists them too. On
+the locks tested, the record was read 0.5 to 2 seconds after the lock reported the change, so the automation runs that
+long after the Yale Access Bluetooth lock entity changes. A record written while Home Assistant was down has `backlog`
+true. A door record has no `source`. With more than one lock, enable each lock's event entity and give each lock an
+automation of its own.
 
 ### The keypad's battery
 

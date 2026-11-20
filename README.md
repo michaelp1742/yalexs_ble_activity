@@ -1,16 +1,16 @@
 # Yale Access Bluetooth Activity
 
 A parallel integration to `yalexs_ble`, Home Assistant's
-[Yale Access Bluetooth](https://www.home-assistant.io/integrations/yalexs_ble/) integration. It shows the lock's own
-log in a logbook of its own: each record Home Assistant reads off the lock is one line in the logbook of this
-integration's device, at the time the lock wrote the record, in the lock's order, such as "Front Door unlocked
-(keypad code by Guest at slot 15)". Each record also fires an event for automations. The record of a lock operation, of
-a credential's use, or of a Home Key operation has the lock's state as its type, such as locked or unlocked, and what
-caused it as its source (a keypad code, the master code, an RF tag, the keypad's button, the inside button, a command
-over Bluetooth, the lock's own relock); any other record has the type of its kind (a door opened, a code added, the
-keypad's info). The integration keeps the lock's clock in step with Home Assistant's. It reads the records through Yale
-Access Bluetooth's connection to the lock and changes nothing in that integration. It has no PIN actions, changes no
-setting on the lock but its clock, and stores no names.
+[Yale Access Bluetooth](https://www.home-assistant.io/integrations/yalexs_ble/) integration.
+It reads the lock's log records and writes them into a Home Assistant logbook, preserving both each record's timestamp and the delivery order.
+
+Each record also fires an event for automations.
+The record of a lock operation, of
+a credential's use, or of a Home Key operation has the lock's state as its type and its cause as its source (a keypad code, the master code, an RF tag, the keypad's button, the inside button, a command
+over Bluetooth, the lock's own relock).
+Any other record has the type of its kind (a door opened, a code added, the keypad's info).
+
+The integration also keeps the lock's clock synchronised with Home Assistant's clock.
 
 ## Requirements
 
@@ -62,7 +62,9 @@ values are not used. A blank is a value not established.
 | Yale Doorman L3 | | | | 6 to 10 |
 | Not listed | | | | |
 
-Every model is a Yale lock, and the records are decoded in Yale's numbering. An August lock is not supported.
+Every model in the table is a Yale lock. For an August lock, as for any other lock without a row of its own, pick
+**Not listed**. The records are decoded in the numbering of the brand that the lock's Yale Access Bluetooth entry gives;
+with no brand, only the record types that both brands share are decoded, as the events section below describes.
 
 ## The option
 
@@ -105,10 +107,15 @@ the records read after Home Assistant was down sit at the times they were writte
 are placed 1 ms apart, in the order read. The logbook of the Yale Access Bluetooth lock and its device gets no line
 from a record: its lines are at Home Assistant's time, and the two logbooks are kept apart.
 
-A record is discarded, with a debug line in the log, when it is earlier than the last record placed for the lock, or
-more than 10 seconds ahead of Home Assistant's time when it is read. Until the first record is placed, the earliest time
-is one day before the entry's last setup, so an older backlog is not placed. The last record's time and the serial
-number are kept across restarts.
+A record that is not decoded, which the events section below describes, has no time of its own. It keeps its place in
+the order the records were read: its line is placed 1 ms after the lock's previous line, or at the time Home Assistant
+read it when the lock has no line yet. It is never discarded.
+
+A record with a time of its own is discarded, with a debug line in the log, when that time is earlier than the time of
+the last such record placed for the lock, or more than 10 seconds ahead of Home Assistant's time when it is read. Until
+the first record is placed, the earliest time is one day before the entry's last setup, so a record whose own time is
+earlier than that, such as one from an older backlog, is not placed. The last record's time and the serial number are
+kept across restarts.
 
 ## The events
 
@@ -151,17 +158,39 @@ state. Every other record has the type of its kind: `door_opened`, `door_closed`
 `code_added`, `code_deleted`, `code_added_v2`, `code_deleted_v2`, `credential_added`, `credential_deleted`,
 `keypad_open`, `keypad_wrong_code`, `keypad_close`, `keypad_info`, `all_codes_deleted`, `factory_reset`, `tamper`,
 `bcm_test`, `dps_info`, `battery_info`, `local_event_notification`, `product_message`, `matter_message`, and
-`dialog_reboot`. A record that Yale's numbering does not decode is `unknown_record`. None of these has a `source`. The
+`dialog_reboot`, or `unknown_record` for a record of a kind with none of these types. None of these has a `source`. The
 lock's answer when no record is unread is no record. The `code_added_v2` and `code_deleted_v2` lines read "code added"
 and "code deleted"; the version is the record's format.
 
-On the locks tested, a keypad code the lock accepts writes two records, the keypad's info and then the code, so it gives
-`keypad_info` and then the lock's state with the source `pin`, or `master_code` at the master code slot. A `keypad_info`
-alone is an entry the lock did not act on, such as an invalid code or a key pressed without a code; an invalid code has
-also left no record. A fingerprint at the Yale Smart Keypad 2 - Fingerprint is recorded as a code at the slot of the PIN
-associated with it, a lock slot of its own, so its source is `pin`, and its line names that slot, for example "unlocked
-(keypad code at slot 9)". Nothing in the record says the slot is a fingerprint, so the line reads as a keypad code, and
-it has a name only when a credential integration names that slot.
+Each record is decoded in the numbering of the brand that the lock's Yale Access Bluetooth entry gives. Yale Access
+Bluetooth gives no brand today, so every lock's records are decoded with no brand, the first case below. A record that
+the numbering does not decode is `unknown_record`, with no `timestamp` and no field beyond `log_type` and `raw`; the
+logbook section above says where its line is placed.
+
+The two numberings differ at the log types `0x14` to `0x19`, `0x1D`, and `0x1E`. These are August's own log types:
+August's numbering has a record of its own at each. Yale's numbering has `battery_info`, `local_event_notification`,
+`product_message`, and `matter_message` at `0x15` to `0x18`, and no record at `0x14`, `0x19`, `0x1D`, or `0x1E`.
+
+- With no brand, only the record types that Yale and August number and lay out alike are decoded, so a record of any log
+  type above is `unknown_record`. The `code` of a `code_added_v2` is in both forms, the hexadecimal followed by the
+  decimal in parentheses, such as `000000000001E240(123456)`.
+- With the brand Yale, the records of log types `0x15` to `0x18` have Yale's four types, and the `code` is in
+  hexadecimal, such as `000000000001E240`.
+- With the brand August, the records of August's own log types but `0x15` are decoded. They have no event type of their
+  own, so each is `unknown_record`, with `timestamp` and the fields the library decodes, such as `jam_state` or
+  `op_source`. The `event_type` field of a Matter event, `0x18`, is published as `record_event_type`, beside the event's
+  own `event_type`, `unknown_record`. The `code` is in decimal, such as `123456`.
+
+Since Yale Access Bluetooth gives no brand, the decoding with the brand August has not run on a lock. It is tested on
+built frames, as is a record of one of August's own log types with no brand.
+
+On the Yale locks tested, a keypad code the lock accepts writes two records, the keypad's info and then the code, so it
+gives `keypad_info` and then the lock's state with the source `pin`, or `master_code` at the master code slot. A
+`keypad_info` alone is an entry the lock did not act on, such as an invalid code or a key pressed without a code; an
+invalid code has also left no record. A fingerprint at the Yale Smart Keypad 2 - Fingerprint is recorded as a code at
+the slot of the PIN associated with it, a lock slot of its own, so its source is `pin`, and its line names that slot,
+for example "unlocked (keypad code at slot 9)". Nothing in the record says the slot is a fingerprint, so the line reads
+as a keypad code, and it has a name only when a credential integration names that slot.
 
 An unlock from the Yale Home app is an `unlocked` record with the source `remote` when Home Assistant reads it. While
 the app is connected to the lock, it can read the record first, and the unlock then gives nothing here.
@@ -178,11 +207,8 @@ the app is connected to the lock, it can read the record first, and the unlock t
 | `name` | on a record of a credential's use, addition, or deletion at a slot, the slot's name from Yale Access Bluetooth Keypad, or `null` |
 | `device_id` | this integration's device for the lock |
 | `log_type` | the record's type number |
-| every other field of the record | under the library's name, such as `slot`, `current_lock_state`, `current_door_state`, `key_slot`, `op_code`, `battery_level`, `battery_level_percent`, `error`, `credential_type`, or `credential_error`; a named value in lower case, such as `unlocked`, and a value with no name as its number |
+| every other field of the record | under the library's name, such as `slot`, `current_lock_state`, `current_door_state`, `key_slot`, `op_code`, `battery_level`, `battery_level_percent`, `credential_type`, or `credential_error`, or as `record_<name>` when the library's name is another key of this table, such as `record_event_type`; a named value in lower case, such as `unlocked`, and a value with no name as its number |
 | `raw` | on `unknown_record` only, the record's 18 bytes in hexadecimal |
-
-On a lock operation, `error` and `battery_level_percent` are one byte of the record, published under both names, so
-the two always hold the same number.
 
 The event of a code record holds the code as the lock wrote it: the `code` of a code's addition, and the `keycode` of
 the keypad's open, wrong code, and close records, in plain text. The recorder keeps each event with its data in its
@@ -257,10 +283,10 @@ actions:
 
 An automation on one cause adds a state condition on the attribute `source`, for example `rf`. The trigger lists three
 of the six state types; an automation that should also run on `unlatched`, `jammed`, or `lock_state` lists them too. On
-the locks tested, the record was read 0.5 to 2 seconds after the lock reported the change, so the automation runs that
-long after the Yale Access Bluetooth lock entity changes. A record written while Home Assistant was down has `backlog`
-true. A door record has no `source`. With more than one lock, enable each lock's event entity and give each lock an
-automation of its own.
+the Yale locks tested, the record was read 0.5 to 2 seconds after the lock reported the change, so the automation runs
+that long after the Yale Access Bluetooth lock entity changes. A record written while Home Assistant was down has
+`backlog` true. A door record has no `source`. With more than one lock, enable each lock's event entity and give each
+lock an automation of its own.
 
 ### The keypad's battery
 
@@ -330,18 +356,20 @@ reading goes ahead as usual.
   a new connection. A record the lock writes with no change, such as a code the app adds, waits for the next read; its
   line is still at its own time.
 - A line's time is the record's own time, to the second, and as right as the lock's clock. A line shows a moment after
-  the time it holds: on the locks tested, the record of a lock change or of a keypad code was read 0.5 to 2 seconds
+  the time it holds: on the Yale locks tested, the record of a lock change or of a keypad code was read 0.5 to 2 seconds
   after the lock reported the change, and a record that waited for a read shows later.
-- A lock clock set back drops the records written in the step's span, since they are earlier than the last record
-  placed. A lock whose clock is more than 10 seconds ahead has its clock set to just ahead of Home Assistant's time at
-  the entry's setup, or at the next reading; a record read before then is discarded when its own time is more than 10
-  seconds ahead of Home Assistant's time at the read.
+- A lock clock set back drops the records with a time of their own written in the step's span, since they are earlier
+  than the last such record placed. A lock whose clock is more than 10 seconds ahead has its clock set to just ahead of
+  Home Assistant's time at the entry's setup, or at the next reading; a record read before then is discarded when its
+  own time is more than 10 seconds ahead of Home Assistant's time at the read.
 - Another integration reading the same lock, such as Yale Access Bluetooth Battery, shares the reads: a record it read
   before this entry registered fires nothing here.
 - A record the app read first fires nothing.
 - The event entity's time is Home Assistant's time when the record fires; its lines, when it is enabled, sit in the
   device's logbook at those times.
-- The records are decoded in Yale's numbering; an August lock is not supported.
+- The records are decoded in the numbering of the brand that the lock's Yale Access Bluetooth entry gives, and with no
+  brand only the record types that both brands share are decoded. A record of August's own log types is `unknown_record`
+  with the brand August and with no brand; with no brand, the case today, it has no `timestamp` and no decoded field.
 
 ## Names from other integrations
 

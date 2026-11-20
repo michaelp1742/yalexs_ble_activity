@@ -49,6 +49,7 @@ from homeassistant.util.hass_dict import HassKey
 
 from .const import (
     ATTR_BACKLOG,
+    ATTR_LOG_TYPE,
     ATTR_TIMESTAMP,
     DOMAIN,
     EVENT_TYPE_ALL_CODES_DELETED,
@@ -162,6 +163,11 @@ class Activity(NamedTuple):
     credential_type: LockCred | None
 
 
+def _named(value: Enum) -> bool:
+    """Return whether value is a member its enum defines; a member the enum makes for a value it does not define is not in __members__."""
+    return value.name in type(value).__members__
+
+
 def _kind_event_type(record: LogRecord) -> str:
     """Return the event type of the record's nearest class in _RECORD_EVENT_TYPES, else unknown_record."""
     for record_class in type(record).__mro__:
@@ -203,7 +209,7 @@ def _source_or_kind(
             credential_type=LockCred() as credential_type,
             credential_error=None,
             slot=slot,
-        ):
+        ) if _named(credential_type):
             if credential_type in (LockCred.PIN, LockCred.INSIDE_DOOR_PIN):
                 return _code_source(slot, credential_type, model)
             return (
@@ -235,7 +241,7 @@ def _source_or_kind(
             # The name of OpCode.ALIRO in lower case is SOURCE_ALIRO, the source of a
             # credential's use, so the operation has a source of its own.
             return SOURCE_ALIRO_OPERATION, None, None
-        case LockOperation(op_code=OpCode() as op_code):
+        case LockOperation(op_code=OpCode() as op_code) if _named(op_code):
             return op_code.name.lower(), None, None
         case LockOperation():
             return SOURCE_LOCK_OPERATION, None, None
@@ -259,7 +265,7 @@ def _source_or_kind(
             | CredentialDeleted(
                 credential_type=LockCred() as credential_type, slot=slot
             )
-        ):
+        ) if _named(credential_type):
             return _kind_event_type(record), slot, credential_type
     return _kind_event_type(record), None, None
 
@@ -280,16 +286,21 @@ def activity_for(record: LogRecord, model: LockModel) -> Activity:
 def _attribute_value(value: Any) -> Any:
     """Return a decoded field as an attribute value."""
     match value:
-        case Enum():
+        case Enum() if _named(value):
             return value.name.lower()
+        case Enum():
+            return value.value
         case tuple():
             return list(value)
     return value
 
 
 def attributes_for(record: LogRecord, backlog: bool) -> dict[str, Any]:
-    """Return the event attributes of a record: its lock time, its decoded fields, and backlog."""
-    attributes: dict[str, Any] = {ATTR_BACKLOG: backlog}
+    """Return the event attributes of a record: backlog, its log type, its lock time, and its decoded fields."""
+    attributes: dict[str, Any] = {
+        ATTR_BACKLOG: backlog,
+        ATTR_LOG_TYPE: record.log_type,
+    }
     for field in fields(record):
         value = getattr(record, field.name)
         if field.name == "time_stamp":

@@ -7,6 +7,7 @@ CONF_LOCK_MODEL = "lock_model"
 
 ATTR_TIMESTAMP = "timestamp"
 ATTR_BACKLOG = "backlog"
+ATTR_LOG_TYPE = "log_type"
 ATTR_CURRENT_LOCK_STATE = "current_lock_state"
 ATTR_NAME = "name"
 ATTR_RAW = "raw"

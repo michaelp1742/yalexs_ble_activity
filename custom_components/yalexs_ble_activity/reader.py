@@ -5,7 +5,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, TypedDict
 
-from yalexs_ble import GetLogError, LogRead, LogRecord, parse_log_event_packet
+from yalexs_ble import Brand, GetLogError, LogRead, LogRecord, parse_log_event_packet
 
 from homeassistant.components.event import ATTR_EVENT_TYPE
 from homeassistant.const import ATTR_DEVICE_ID, CONF_ADDRESS
@@ -29,6 +29,8 @@ from .const import (
 from .models import LOCK_MODELS
 
 if TYPE_CHECKING:
+    from homeassistant.components.yalexs_ble import YALEXSBLEConfigEntry
+
     from . import YaleXSBLEActivityConfigEntry
     from .event import YaleXSBLEActivityEvent
 
@@ -65,11 +67,13 @@ class LogReader:
         self,
         hass: HomeAssistant,
         entry: YaleXSBLEActivityConfigEntry,
+        owner: YALEXSBLEConfigEntry,
         device: DeviceEntry,
         clock: LockClock,
     ) -> None:
-        """Initialize the reader of one entry's lock."""
+        """Initialize the reader of one entry's lock, whose entry of core's yalexs_ble is owner."""
         self._hass = hass
+        self._owner = owner
         self._title = entry.title
         self._address: str = entry.data[CONF_ADDRESS]
         models = {model.key: model for model in LOCK_MODELS}
@@ -125,11 +129,18 @@ class LogReader:
         for record, backlog, read_time in held:
             self._async_fire(record, backlog, read_time)
 
+    def _brand(self) -> Brand | None:
+        """Return the brand that the runtime data of core's entry holds now, or None."""
+        # The runtime data of core's entry may have no brand attribute.
+        if (brand := getattr(self._owner.runtime_data, "brand", None)) is None:
+            return None
+        return Brand(brand)
+
     async def async_log_record(self, read: LogRead) -> None:
         """Fire the record's log record event, or hold it until Home Assistant has started; give a GetLogError to the clock."""
         read_time = read.times.reply_received
         backlog = read.backlog
-        record = parse_log_event_packet(read.reply)
+        record = parse_log_event_packet(read.reply, self._brand())
         if isinstance(record, GetLogError):
             self._clock.async_sample(record)
             return

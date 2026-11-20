@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import json
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Self
 from unittest.mock import Mock, patch
 
@@ -17,6 +18,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 from yalexs_ble import (
+    Brand,
     CodeAdded,
     CredentialAdded,
     KeypadInfo,
@@ -48,6 +50,7 @@ from . import (
     ADDRESS,
     ALIRO_SLOT_2_UNLOCKED,
     ALL_CODES_DELETED,
+    AUGUST_DEADBOLT_JAM,
     AUTO_RELOCK_LOCKED,
     AUTO_RELOCK_SECUREMODE,
     BATTERY_INFO,
@@ -60,7 +63,9 @@ from . import (
     CODE_OPERATION_SLOT_FFEE,
     CREDENTIAL_ADDED_RF_SLOT_7,
     CREDENTIAL_ADDED_RF_SLOT_7_LOCKED,
+    CREDENTIAL_ADDED_TYPE_3_SLOT_7,
     CREDENTIAL_DELETED_RF_SLOT_7,
+    CREDENTIAL_DELETED_TYPE_3_SLOT_7,
     CREDENTIAL_TYPE_3_SLOT_2_UNLOCKED,
     DIALOG_REBOOT,
     DOOR_AJAR,
@@ -97,6 +102,7 @@ from . import (
     RF_SLOT_7_UNLOCKED,
     RF_SLOT_8_ERROR,
     TAMPER_DOOR_FORCED_OPEN,
+    TAMPER_TYPE_0701,
     TIME,
     TITLE,
     activity_device,
@@ -211,18 +217,24 @@ ONE_REPLY_PER_SOURCE = [
     REMOTE_UNLOCKED,
     INSIDE_BUTTON_LOCKED,
     AUTO_RELOCK_LOCKED,
-    *[lock_operation(op_code) for op_code in OpCode if op_code not in SOURCE_OP_CODES],
+    *[
+        lock_operation(op_code.value)
+        for op_code in OpCode
+        if op_code not in SOURCE_OP_CODES
+    ],
     lock_operation(0x16),
     HOMEKEY_OPERATION,
 ]
 
 
 def _activities(replies: list[bytes]) -> list[Activity]:
-    """Return the activity of each reply under the unity row."""
+    """Return the activity of each reply under the unity row and the brand yale."""
     unity = next(model for model in LOCK_MODELS if model.key == "unity")
     # The replies' own times are out of order, so they are read without the
     # reader's window.
-    return [activity_for(parse_log_event_packet(raw), unity) for raw in replies]
+    return [
+        activity_for(parse_log_event_packet(raw, Brand.YALE), unity) for raw in replies
+    ]
 
 
 def _asks(namer: Mock) -> list[tuple[Any, ...]]:
@@ -685,7 +697,7 @@ async def test_a_credential_operation_fires_its_lock_state_with_the_source_of_it
             id="auto_lock_securemode",
         ),
         pytest.param(
-            lock_operation(OpCode.LOW_BAT_AUTO_UNLOCK),
+            lock_operation(OpCode.LOW_BAT_AUTO_UNLOCK.value),
             {
                 ATTR_EVENT_TYPE: "locked",
                 "source": "low_bat_auto_unlock",
@@ -694,7 +706,7 @@ async def test_a_credential_operation_fires_its_lock_state_with_the_source_of_it
             id="op_code_member",
         ),
         pytest.param(
-            lock_operation(OpCode.ALIRO),
+            lock_operation(OpCode.ALIRO.value),
             {
                 ATTR_EVENT_TYPE: "locked",
                 "source": "aliro_operation",
@@ -967,6 +979,200 @@ async def test_code_records_hold_their_codes_and_are_named(
     namer.assert_called_once()
 
 
+async def test_a_lock_operation_holds_byte_15_as_battery_level_percent_alone(
+    hass: HomeAssistant,
+    owner_entry: MockConfigEntry,
+    loaded_entry: MockConfigEntry,
+    log_records: list[Event],
+) -> None:
+    """A LockOperation's event holds byte 15 as battery_level_percent and has no error."""
+    await async_deliver(owner_entry, AUTO_RELOCK_LOCKED)
+
+    assert last_data(log_records) == {
+        ATTR_EVENT_TYPE: "locked",
+        "source": "auto_lock",
+        "backlog": False,
+        "log_type": 0x00,
+        "op_code": "auto_relock",
+        "current_lock_state": "locked",
+        "key_slot": 0,
+        "timestamp": "2026-10-25T07:19:23+00:00",
+        "battery_level": 5920,
+        "temperature": 25,
+        "battery_level_percent": 0x3F,
+        "serial": 1,
+        "device_id": activity_device(hass, loaded_entry).id,
+    }
+
+
+def _code_added_v2_slot_4(code: str) -> dict[str, Any]:
+    """Return the event data of CODE_ADDED_V2_SLOT_4 with code, less the serial and the device."""
+    return {
+        ATTR_EVENT_TYPE: "code_added_v2",
+        "backlog": False,
+        "timestamp": TIME,
+        "log_type": 0x0A,
+        "slot": 4,
+        "code": code,
+        "name": None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("runtime_data", "raw", "expected"),
+    [
+        pytest.param(
+            {"brand": "august"},
+            CODE_ADDED_V2_SLOT_4,
+            _code_added_v2_slot_4("123456"),
+            id="august_code_in_decimal",
+        ),
+        *(
+            pytest.param(
+                runtime_data,
+                CODE_ADDED_V2_SLOT_4,
+                _code_added_v2_slot_4("000000000001E240(123456)"),
+                id=f"{case}_code_in_both_forms",
+            )
+            for case, runtime_data in (
+                ("brand_none", {"brand": None}),
+                ("no_brand", {}),
+            )
+        ),
+        *(
+            pytest.param(
+                runtime_data,
+                raw,
+                {
+                    ATTR_EVENT_TYPE: "unknown_record",
+                    "backlog": False,
+                    "log_type": raw[4],
+                    "raw": raw.hex(),
+                },
+                id=f"{case}_{raw[4]:02x}_unknown_record",
+            )
+            for case, runtime_data in (
+                ("brand_none", {"brand": None}),
+                ("no_brand", {}),
+            )
+            for raw in (
+                BATTERY_INFO,
+                LOCAL_EVENT_NOTIFICATION,
+                PRODUCT_MESSAGE,
+                MATTER_MESSAGE,
+            )
+        ),
+    ],
+)
+async def test_the_brand_of_cores_entry_decides_how_a_record_decodes(
+    hass: HomeAssistant,
+    owner_entry: MockConfigEntry,
+    config_entry: MockConfigEntry,
+    log_records: list[Event],
+    runtime_data: dict[str, Any],
+    raw: bytes,
+    expected: dict[str, Any],
+) -> None:
+    """The brand august gives a CodeAddedv2 code in decimal; no brand gives it in both forms and the records 0x15 to 0x18 as unknown_record with their bytes."""
+    owner_entry.runtime_data = SimpleNamespace(
+        lock=owner_entry.runtime_data.lock, **runtime_data
+    )
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    await async_deliver(owner_entry, raw)
+
+    assert last_data(log_records) == {
+        **expected,
+        "serial": 1,
+        "device_id": activity_device(hass, config_entry).id,
+    }
+
+
+@pytest.mark.usefixtures("loaded_entry")
+async def test_a_brand_set_after_setup_decodes_the_next_record(
+    owner_entry: MockConfigEntry, log_records: list[Event]
+) -> None:
+    """The brand set on the runtime data of core's entry after setup decodes the next record."""
+    await async_deliver(owner_entry, CODE_ADDED_V2_SLOT_4)
+    owner_entry.runtime_data.brand = "august"
+    await async_deliver(owner_entry, CODE_ADDED_V2_SLOT_4)
+
+    assert [event.data["code"] for event in log_records] == [
+        "000000000001E240",
+        "123456",
+    ]
+
+
+async def test_a_lock_deadbolt_jam_with_the_brand_august_fires_unknown_record_with_its_fields_at_its_own_time(
+    hass: HomeAssistant,
+    owner_entry: MockConfigEntry,
+    loaded_entry: MockConfigEntry,
+    log_records: list[Event],
+) -> None:
+    """With the brand august, a LockDeadboltJam fires unknown_record with its time, its decoded fields, and its bytes, at its own time."""
+    owner_entry.runtime_data.brand = "august"
+
+    await async_deliver(owner_entry, AUGUST_DEADBOLT_JAM)
+
+    (jam,) = log_records
+    assert dict(jam.data) == {
+        ATTR_EVENT_TYPE: "unknown_record",
+        "backlog": False,
+        "log_type": 0x16,
+        "timestamp": TIME,
+        "battery_level": 6000,
+        "jam_state": "occurs_during_unlocking",
+        "raw": AUGUST_DEADBOLT_JAM.hex(),
+        "serial": 1,
+        "device_id": activity_device(hass, loaded_entry).id,
+    }
+    assert jam.time_fired.isoformat() == TIME
+
+
+async def test_a_lock_deadbolt_jam_with_no_brand_fires_unknown_record_with_its_bytes_after_the_last_line(
+    hass: HomeAssistant,
+    owner_entry: MockConfigEntry,
+    loaded_entry: MockConfigEntry,
+    log_records: list[Event],
+) -> None:
+    """With no brand, a LockDeadboltJam fires unknown_record with its log type and its bytes, 1 ms after the lock's previous line."""
+    owner_entry.runtime_data = SimpleNamespace(lock=owner_entry.runtime_data.lock)
+
+    await async_deliver(owner_entry, DOOR_OPENED)
+    await async_deliver(owner_entry, AUGUST_DEADBOLT_JAM)
+
+    door, jam = log_records
+    assert dict(jam.data) == {
+        ATTR_EVENT_TYPE: "unknown_record",
+        "backlog": False,
+        "log_type": 0x16,
+        "raw": AUGUST_DEADBOLT_JAM.hex(),
+        "serial": 2,
+        "device_id": activity_device(hass, loaded_entry).id,
+    }
+    assert jam.time_fired_timestamp == door.time_fired_timestamp + 0.001
+
+
+@pytest.mark.parametrize("raw", ONE_REPLY_PER_TYPE)
+@pytest.mark.usefixtures("loaded_entry")
+async def test_every_event_holds_the_record_type_after_backlog(
+    freezer: FrozenDateTimeFactory,
+    owner_entry: MockConfigEntry,
+    log_records: list[Event],
+    raw: bytes,
+) -> None:
+    """The event of each type holds log_type, the record's type at byte 4, as the attribute after backlog."""
+    freezer.move_to(AFTER_SLOT_FFEE)
+
+    await async_deliver(owner_entry, raw)
+
+    assert list(last_data(log_records).items())[:2] == [
+        ("backlog", False),
+        ("log_type", raw[4]),
+    ]
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
@@ -1068,6 +1274,28 @@ async def test_code_records_hold_their_codes_and_are_named(
             },
             id="credential_deleted",
         ),
+        *(
+            pytest.param(
+                raw,
+                {
+                    ATTR_EVENT_TYPE: event_type,
+                    "timestamp": TIME,
+                    "log_type": raw[4],
+                    "credential_type": 3,
+                    "slot": 7,
+                    "credential_error": None,
+                    "current_lock_state": "unlocked",
+                    "current_door_state": "closed",
+                    "battery_level": 5919,
+                    "battery_level_percent": 66,
+                },
+                id=f"{event_type}_type_outside_lockcred",
+            )
+            for raw, event_type in (
+                (CREDENTIAL_ADDED_TYPE_3_SLOT_7, "credential_added"),
+                (CREDENTIAL_DELETED_TYPE_3_SLOT_7, "credential_deleted"),
+            )
+        ),
         pytest.param(
             TAMPER_DOOR_FORCED_OPEN,
             {
@@ -1077,6 +1305,16 @@ async def test_code_records_hold_their_codes_and_are_named(
                 "tamper_type": "door_forced_open",
             },
             id="tamper",
+        ),
+        pytest.param(
+            TAMPER_TYPE_0701,
+            {
+                ATTR_EVENT_TYPE: "tamper",
+                "timestamp": TIME,
+                "log_type": 0x0F,
+                "tamper_type": 0x0701,
+            },
+            id="tamper_type_outside_tampertype",
         ),
         pytest.param(
             BCM_TEST,
@@ -1242,7 +1480,7 @@ async def test_a_subclass_of_a_record_class_fires_the_type_of_its_class(
     """A record of a subclass the library adds fires the type of the record class it derives from."""
     with patch(
         "custom_components.yalexs_ble_activity.reader.parse_log_event_packet",
-        side_effect=record_class.decode,
+        side_effect=lambda raw, brand: record_class.decode(raw),
     ):
         await async_deliver(owner_entry, raw)
 
@@ -1258,7 +1496,7 @@ class _LaterRecord(LogRecord):
     @classmethod
     def decode(cls, raw: bytes) -> Self:
         """Build the record with byte 5 as its value."""
-        return cls(raw, raw[4], value=raw[5])
+        return cls(raw, value=raw[5])
 
 
 async def test_a_record_class_with_no_type_fires_unknown_record_with_its_bytes(
@@ -1270,7 +1508,7 @@ async def test_a_record_class_with_no_type_fires_unknown_record_with_its_bytes(
     """A record of a class with no event type fires unknown_record with its decoded fields and its raw bytes."""
     with patch(
         "custom_components.yalexs_ble_activity.reader.parse_log_event_packet",
-        side_effect=_LaterRecord.decode,
+        side_effect=lambda raw, brand: _LaterRecord.decode(raw),
     ):
         await async_deliver(owner_entry, NO_DECODER)
 

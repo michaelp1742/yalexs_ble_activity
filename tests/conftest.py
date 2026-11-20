@@ -2,8 +2,9 @@
 
 from collections.abc import Iterator
 import time
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, Mock, create_autospec
+from unittest.mock import AsyncMock, create_autospec
 
 import pytest
 from pytest_homeassistant_custom_component.common import (
@@ -45,12 +46,12 @@ def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
 
 
 async def _async_setup_owner_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Load core's entry with a new PushLock, as core does on every load."""
+    """Load core's entry with the brand yale and a new PushLock; core makes a new PushLock on every load."""
     lock = create_autospec(PushLock, instance=True, address=entry.data[CONF_ADDRESS])
     # The lock's clock shows Home Assistant's time, so setup writes nothing.
     lock.get_status.side_effect = lambda status_type: status_reply(int(time.time()))
     lock.sync_rtc.side_effect = sync_rtc_answering()
-    entry.runtime_data = Mock(lock=lock)
+    entry.runtime_data = SimpleNamespace(lock=lock, brand="yale")
     return True
 
 

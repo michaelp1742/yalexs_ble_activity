@@ -51,7 +51,7 @@ async def async_setup_entry(
         name=entry.title,
     )
     clock = LockClock(hass, entry, lock)
-    reader = LogReader(hass, entry, device, clock)
+    reader = LogReader(hass, entry, owner, device, clock)
     await reader.async_load()
     entry.runtime_data = reader
     entry.async_on_unload(reader.async_save)

@@ -141,6 +141,10 @@ NO_DECODER = with_checksum("bb2d00001178563412010203040506070200")
 # A LockDeadboltJam, log_type 0x16 in August's numbering, with the battery level
 # 6000 at bytes 9 and 10 and the jam state 1 at byte 11.
 AUGUST_DEADBOLT_JAM = with_checksum("bb2d00001678563412701701000000000200")
+# A constructed MatterEvent, log_type 0x18 in August's numbering, with the event type
+# 1 at byte 9, the fabric index 2 at byte 10, and the fabric vendor id 0xFFF1 at bytes
+# 11 and 12.
+AUGUST_MATTER_EVENT = with_checksum("bb2d000018785634120102f1ff0000000200")
 
 
 async def async_setup_owner(

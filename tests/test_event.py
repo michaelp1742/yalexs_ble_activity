@@ -51,6 +51,7 @@ from . import (
     ALIRO_SLOT_2_UNLOCKED,
     ALL_CODES_DELETED,
     AUGUST_DEADBOLT_JAM,
+    AUGUST_MATTER_EVENT,
     AUTO_RELOCK_LOCKED,
     AUTO_RELOCK_SECUREMODE,
     BATTERY_INFO,
@@ -1128,6 +1129,34 @@ async def test_a_lock_deadbolt_jam_with_the_brand_august_fires_unknown_record_wi
         "device_id": activity_device(hass, loaded_entry).id,
     }
     assert jam.time_fired.isoformat() == TIME
+
+
+async def test_a_matter_event_with_the_brand_august_fires_unknown_record_with_its_event_type_as_record_event_type(
+    hass: HomeAssistant,
+    owner_entry: MockConfigEntry,
+    loaded_entry: MockConfigEntry,
+    log_records: list[Event],
+) -> None:
+    """With the brand august, a MatterEvent fires unknown_record with its event type as record_event_type beside its other decoded fields, at its own time."""
+    owner_entry.runtime_data.brand = "august"
+
+    await async_deliver(owner_entry, AUGUST_MATTER_EVENT)
+
+    (matter,) = log_records
+    assert dict(matter.data) == {
+        ATTR_EVENT_TYPE: "unknown_record",
+        "backlog": False,
+        "log_type": 0x18,
+        "timestamp": TIME,
+        "record_event_type": "fabric_added",
+        "fabric_index": 2,
+        "fabric_vendor_id": 0xFFF1,
+        "registration_status": None,
+        "raw": AUGUST_MATTER_EVENT.hex(),
+        "serial": 1,
+        "device_id": activity_device(hass, loaded_entry).id,
+    }
+    assert matter.time_fired.isoformat() == TIME
 
 
 async def test_a_lock_deadbolt_jam_with_no_brand_fires_unknown_record_with_its_bytes_after_the_last_line(

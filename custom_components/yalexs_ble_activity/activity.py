@@ -40,6 +40,8 @@ from yalexs_ble import (
     Tamper,
 )
 
+from homeassistant.components.event import ATTR_EVENT_TYPE
+from homeassistant.const import ATTR_DEVICE_ID
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.integration_platform import (
     async_process_integration_platforms,
@@ -50,6 +52,9 @@ from homeassistant.util.hass_dict import HassKey
 from .const import (
     ATTR_BACKLOG,
     ATTR_LOG_TYPE,
+    ATTR_NAME,
+    ATTR_SERIAL,
+    ATTR_SOURCE,
     ATTR_TIMESTAMP,
     DOMAIN,
     EVENT_TYPE_ALL_CODES_DELETED,
@@ -151,6 +156,19 @@ _RECORD_EVENT_TYPES: dict[type[LogRecord], str] = {
     ProductMessage: EVENT_TYPE_PRODUCT_MESSAGE,
     MatterMessage: EVENT_TYPE_MATTER_MESSAGE,
     DialogReboot: EVENT_TYPE_DIALOG_REBOOT,
+}
+
+# A record field with one of these names is published as record_<name>, so that the
+# event has the field's value and an attribute of that name is always its own.
+_EVENT_ATTRIBUTES = {
+    ATTR_BACKLOG,
+    ATTR_LOG_TYPE,
+    ATTR_TIMESTAMP,
+    ATTR_SERIAL,
+    ATTR_EVENT_TYPE,
+    ATTR_SOURCE,
+    ATTR_NAME,
+    ATTR_DEVICE_ID,
 }
 
 
@@ -306,7 +324,12 @@ def attributes_for(record: LogRecord, backlog: bool) -> dict[str, Any]:
         if field.name == "time_stamp":
             attributes[ATTR_TIMESTAMP] = dt_util.utc_from_timestamp(value).isoformat()
         elif field.name != "raw":
-            attributes[field.name] = _attribute_value(value)
+            name = (
+                f"record_{field.name}"
+                if field.name in _EVENT_ATTRIBUTES
+                else field.name
+            )
+            attributes[name] = _attribute_value(value)
     return attributes
 
 

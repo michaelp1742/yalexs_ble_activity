@@ -77,12 +77,14 @@ the lock's clock in step with its own (below).
 With the option on, the entry adds a device of its own, named after the lock, which has the same Bluetooth connection
 as the Yale Access Bluetooth device for the lock and is listed under that device's **Linked devices**. The entry reads
 the lock's log whenever it is loaded with the option on. Turning the option off reloads the entry, which then reads and
-writes nothing on the lock; the device and its logbook stay.
+writes nothing on the lock; the device stays, and so do the lines already placed.
 
 ## The logbook
 
-The logbook of this integration's device, on the device's page or in **Activity** filtered to the device, lists one
-line per record, in the order the lock wrote them:
+The logbook lists one line per record, in the order the lock wrote them. A record names the lock entity of Yale Access
+Bluetooth, so its line is wherever the logbook includes that entity: in **Activity** with no target and no filter, with
+a target that holds the lock entity, such as the lock's device or its area, or filtered to the Yale Access Bluetooth
+integration, on the lock's device page, and in the lock entity's own logbook. The lines read:
 
 - "Front Door unlocked (keypad code by Guest at slot 15)", a keypad code with its name from Yale Access Bluetooth
   Keypad;
@@ -93,19 +95,26 @@ line per record, in the order the lock wrote them:
 - "Front Door code added for Guest at slot 4", an addition or a deletion;
 - "Front Door keypad info", "Front Door door opened", and so on for every other record.
 
-The line is the device's name and the record's words: the words of its source or of its type, the name where one is
-known, and the slot where the record has one, but for the master code, whose slot is the model's. The record of a lock
-operation, of a credential's use, or of a Home Key operation holds the lock's state after it, and its line has that
-state, such as "unlocked", "locked", or "secured", before the record's words, which are then in parentheses. The record
-of a credential added or deleted holds the lock's state too but records no operation, so its line has no state, and
-neither has the line of a code added or deleted, a door change, a refused credential, or the keypad's info. A slot above
-`0xFF` is written in hexadecimal: a code added at the master code slot reads "code added at slot 0xFFEE".
+The line is the name of this integration's device and the record's words: the words of its source or of its type, the
+name where one is known, and the slot where the record has one, but for the master code, whose slot is the model's. The
+record of a lock operation, of a credential's use, or of a Home Key operation holds the lock's state after it, and its
+line has that state, such as "unlocked", "locked", or "secured", before the record's words, which are then in
+parentheses. The record of a credential added or deleted holds the lock's state too but records no operation, so its
+line has no state, and neither has the line of a code added or deleted, a door change, a refused credential, or the
+keypad's info. A slot above `0xFF` is written in hexadecimal: a code added at the master code slot reads "code added at
+slot 0xFFEE". Each line has the icon of the record's type, such as a lock for "locked" and an open door for "door
+opened".
 
 Each line is placed at the record's own time, the lock's clock when it wrote the record, not the time Home Assistant
 read it. A keypad code entered before the lock relocked sits before the relock's line, whenever the two were read, and
 the records read after Home Assistant was down sit at the times they were written. Records written in the same second
-are placed 1 ms apart, in the order read. The logbook of the Yale Access Bluetooth lock and its device gets no line
-from a record: its lines are at Home Assistant's time, and the two logbooks are kept apart.
+are placed 1 ms apart, in the order read. The lock's own lines, such as its state changes, are at Home Assistant's
+time, beside the records' lines at the lock's time.
+
+A record placed by an earlier release of this integration names no lock entity, and its line is only in **Activity**
+with no target and no filter. Where that release gave the record a type this release no longer fires, such as `pin`, the
+line has no icon of its own. The logbook of this integration's device has the lines of its event entity, when that is
+enabled, and no record's line.
 
 A record that is not decoded, which the events section below describes, has no time of its own. It keeps its place in
 the order the records were read: its line is placed 1 ms after the lock's previous line, or at the time Home Assistant
@@ -206,6 +215,7 @@ the app is connected to the lock, it can read the record first, and the unlock t
 | `backlog` | `true` for a record that was unread on the lock when the reads began, such as one written while Home Assistant was down |
 | `name` | on a record of a credential's use, addition, or deletion at a slot, the slot's name from Yale Access Bluetooth Keypad, or `null` |
 | `device_id` | this integration's device for the lock |
+| `entity_id` | the lock entity of Yale Access Bluetooth for the lock, which places the line in the lock's logbook; absent when the lock has no lock entity |
 | `log_type` | the record's type number |
 | every other field of the record | under the library's name, such as `slot`, `current_lock_state`, `current_door_state`, `key_slot`, `op_code`, `battery_level`, `battery_level_percent`, `credential_type`, or `credential_error`, or as `record_<name>` when the library's name is another key of this table, such as `record_event_type`; a named value in lower case, such as `unlocked`, and a value with no name as its number |
 | `raw` | on `unknown_record` only, the record's 18 bytes in hexadecimal |
@@ -244,9 +254,9 @@ With more than one lock, `device_id` in `event_data` picks the lock.
 ### The event entity
 
 The device also has the event entity **Activity**, for example `event.front_door_activity`, disabled by default.
-Enabled, it fires an entity event for each record placed in the logbook, with the same data but `device_id`, for
-automations on `event.received`. Its time is Home Assistant's time when the record fires, not the record's own time, so
-its lines join the device's logbook at those times, beside the records' lines.
+Enabled, it fires an entity event for each record placed in the logbook, with the same data but `device_id` and
+`entity_id`, for automations on `event.received`. Its time is Home Assistant's time when the record fires, not the
+record's own time, so its lines are in the logbook of this integration's device at those times.
 
 The device page's Events card shows the entity's latest event by its type, such as "Unlocked", "Locked", or "Secured".
 An automation on the lock's state and its cause triggers on the state types and reads the cause from the entity's
@@ -367,6 +377,8 @@ reading goes ahead as usual.
 - A record the app read first fires nothing.
 - The event entity's time is Home Assistant's time when the record fires; its lines, when it is enabled, sit in the
   device's logbook at those times.
+- **Activity** filtered to the Yale Access Bluetooth Activity integration shows the event entity's lines and no record's
+  line, since a record is in the logbook of the lock, under the Yale Access Bluetooth integration.
 - The records are decoded in the numbering of the brand that the lock's Yale Access Bluetooth entry gives, and with no
   brand only the record types that both brands share are decoded. A record of August's own log types is `unknown_record`
   with the brand August and with no brand; with no brand, the case today, it has no `timestamp` and no decoded field.

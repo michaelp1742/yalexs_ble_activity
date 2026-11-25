@@ -66,6 +66,7 @@ async def test_the_logbook_of_cores_lock_entity_returns_the_record_at_its_time(
             "message": "unlocked (keypad code at slot 1)",
             "domain": "yalexs_ble",
             "when": event.time_fired_timestamp,
+            "icon": "mdi:lock-open-variant",
         }
     ]
     assert await _async_logbook_entries(hass, hass_ws_client, [ENTITY_ID]) == []

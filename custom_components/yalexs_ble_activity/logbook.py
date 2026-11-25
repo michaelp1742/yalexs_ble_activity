@@ -3,7 +3,11 @@
 from collections.abc import Callable
 
 from homeassistant.components.event import ATTR_EVENT_TYPE
-from homeassistant.components.logbook import LOGBOOK_ENTRY_MESSAGE, LOGBOOK_ENTRY_NAME
+from homeassistant.components.logbook import (
+    LOGBOOK_ENTRY_ICON,
+    LOGBOOK_ENTRY_MESSAGE,
+    LOGBOOK_ENTRY_NAME,
+)
 from homeassistant.const import ATTR_DEVICE_ID
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
@@ -20,6 +24,7 @@ from .const import (
     EVENT_TYPE_CODE_DELETED_V2,
     EVENT_TYPE_CREDENTIAL_ADDED,
     EVENT_TYPE_CREDENTIAL_DELETED,
+    EVENT_TYPE_ICONS,
     EVENT_TYPE_WORDS,
     LOCK_STATE_WORDS,
     OWNER_DOMAIN,
@@ -74,10 +79,15 @@ def async_describe_events(
         if source is not None:
             state = data[ATTR_CURRENT_LOCK_STATE]
             message = f"{LOCK_STATE_WORDS.get(state, state)} ({message})"
-        return {
+        description = {
             LOGBOOK_ENTRY_NAME: device_name or DEFAULT_NAME,
             LOGBOOK_ENTRY_MESSAGE: message,
         }
+        # A stored event of an earlier release can have an event type with no row,
+        # such as pin.
+        if (icon := EVENT_TYPE_ICONS.get(event_type)) is not None:
+            description[LOGBOOK_ENTRY_ICON] = icon
+        return description
 
     # The logbook returns this event for the lock's entities only when it is described
     # under the domain of their config entry.

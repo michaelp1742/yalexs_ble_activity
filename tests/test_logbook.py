@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -91,7 +91,7 @@ async def test_the_logbook_describes_a_log_record_by_its_word_name_and_slot(
         Event(EVENT_LOG_RECORD, {**data, "device_id": device_id})
     )
 
-    assert description == {"name": TITLE, "message": message}
+    assert (description["name"], description["message"]) == (TITLE, message)
 
 
 @pytest.mark.parametrize(
@@ -186,7 +186,7 @@ async def test_the_logbook_line_of_a_record_with_a_source_leads_with_the_lock_st
         Event(EVENT_LOG_RECORD, {**data, "device_id": device_id})
     )
 
-    assert description == {"name": TITLE, "message": message}
+    assert (description["name"], description["message"]) == (TITLE, message)
 
 
 async def test_the_logbook_describes_a_fired_log_record_event(
@@ -206,6 +206,7 @@ async def test_the_logbook_describes_a_fired_log_record_event(
     assert _describer(hass)(event) == {
         "name": TITLE,
         "message": "unlocked (keypad code by Guest at slot 1)",
+        "icon": "mdi:lock-open-variant",
     }
 
 
@@ -233,6 +234,66 @@ async def test_the_logbook_names_the_line_after_the_integrations_device(
         "Porch",
         "Yale Access Bluetooth lock",
     ]
+
+
+@pytest.mark.parametrize(
+    ("event_type", "icon"),
+    [
+        ("locked", "mdi:lock"),
+        ("unlocked", "mdi:lock-open-variant"),
+        ("secured", "mdi:shield-lock"),
+        ("unlatched", "mdi:lock-open-variant"),
+        ("jammed", "mdi:lock-alert"),
+        ("lock_state", "mdi:lock-question"),
+        ("credential_error", "mdi:key-alert"),
+        ("door_opened", "mdi:door-open"),
+        ("door_closed", "mdi:door-closed"),
+        ("door_ajar", "mdi:door-open"),
+        ("door_state_changed", "mdi:door"),
+        ("code_added", "mdi:key-plus"),
+        ("code_deleted", "mdi:key-minus"),
+        ("code_added_v2", "mdi:key-plus"),
+        ("code_deleted_v2", "mdi:key-minus"),
+        ("credential_added", "mdi:key-plus"),
+        ("credential_deleted", "mdi:key-minus"),
+        ("keypad_open", "mdi:dialpad"),
+        ("keypad_wrong_code", "mdi:key-alert"),
+        ("keypad_close", "mdi:dialpad"),
+        ("keypad_info", "mdi:dialpad"),
+        ("all_codes_deleted", "mdi:key-remove"),
+        ("factory_reset", "mdi:restore"),
+        ("tamper", "mdi:alert-circle"),
+        ("bcm_test", "mdi:test-tube"),
+        ("dps_info", "mdi:information-outline"),
+        ("battery_info", "mdi:battery"),
+        ("local_event_notification", "mdi:bell-outline"),
+        ("product_message", "mdi:message-text-outline"),
+        ("matter_message", "mdi:message-text-outline"),
+        ("dialog_reboot", "mdi:restart"),
+        ("unknown_record", "mdi:help-circle-outline"),
+        ("pin", None),
+    ],
+)
+async def test_the_logbook_line_has_the_icon_of_its_event_type(
+    hass: HomeAssistant,
+    loaded_entry: MockConfigEntry,
+    event_type: str,
+    icon: str | None,
+) -> None:
+    """Each event type has its icon, and an event type only an earlier release fired has none."""
+    description = _describer(hass)(
+        Event(
+            EVENT_LOG_RECORD,
+            {
+                "event_type": event_type,
+                "device_id": activity_device(hass, loaded_entry).id,
+            },
+        )
+    )
+
+    assert description == {"name": TITLE, "message": ANY} | (
+        {} if icon is None else {"icon": icon}
+    )
 
 
 async def test_the_logbook_of_cores_lock_entity_keeps_the_log_record_event(

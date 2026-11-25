@@ -36,11 +36,13 @@ from custom_components.yalexs_ble_activity.const import (
     EVENT_TYPE_WORDS,
     EVENT_TYPES,
     LOCK_STATE_WORDS,
+    OWNER_DOMAIN,
 )
 from custom_components.yalexs_ble_activity.models import LOCK_MODELS
 from homeassistant.components.automation import DOMAIN as AUTOMATION_DOMAIN
 from homeassistant.components.config import device_registry as config_device_registry
 from homeassistant.components.event import ATTR_EVENT_TYPE, ATTR_EVENT_TYPES
+from homeassistant.components.lock import DOMAIN as LOCK_DOMAIN
 from homeassistant.const import ATTR_FRIENDLY_NAME, EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
@@ -894,6 +896,35 @@ async def test_a_disabled_entity_leaves_the_reader_firing_log_record_events(
 
     assert [event.data[ATTR_EVENT_TYPE] for event in log_records] == ["unlocked"]
     assert hass.states.get(ENTITY_ID) is None
+
+
+async def test_a_fired_record_names_cores_lock_entity_and_the_entity_state_does_not(
+    hass: HomeAssistant,
+    entity_registry: er.EntityRegistry,
+    owner_entry: MockConfigEntry,
+    config_entry: MockConfigEntry,
+    log_records: list[Event],
+) -> None:
+    """The log record event names core's lock entity, found by the PushLock's address, and the integration's device, and the event entity's state has no entity_id."""
+    lock = owner_entry.runtime_data.lock
+    # The lower-case address differs from the entry's, so a lookup by the entry's
+    # address finds no lock entity.
+    lock.address = ADDRESS.lower()
+    core_lock = entity_registry.async_get_or_create(
+        LOCK_DOMAIN, OWNER_DOMAIN, lock.address, config_entry=owner_entry
+    )
+    enable_entity(entity_registry, config_entry)
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    await async_deliver(owner_entry, CODE_OPERATION_SLOT_1)
+
+    (event,) = log_records
+    assert event.data["entity_id"] == core_lock.entity_id
+    assert event.data["device_id"] == activity_device(hass, config_entry).id
+    state = hass.states.get(ENTITY_ID)
+    assert state.attributes["serial"] == 1
+    assert "entity_id" not in state.attributes
 
 
 async def test_an_enabled_entity_fires_each_record_under_its_log_record_event(

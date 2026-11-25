@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.yalexs_ble_activity.const import DOMAIN, EVENT_LOG_RECORD
+from custom_components.yalexs_ble_activity.const import EVENT_LOG_RECORD, OWNER_DOMAIN
 from custom_components.yalexs_ble_activity.logbook import async_describe_events
 from homeassistant.components.logbook import DOMAIN as LOGBOOK_DOMAIN
 from homeassistant.components.logbook.helpers import async_determine_event_types
@@ -33,7 +33,7 @@ def _describer(hass: HomeAssistant) -> Callable[[Event], dict[str, Any]]:
             {(domain, event_type): describe}
         ),
     )
-    return describers[DOMAIN, EVENT_LOG_RECORD]
+    return describers[OWNER_DOMAIN, EVENT_LOG_RECORD]
 
 
 @pytest.mark.parametrize(
@@ -235,10 +235,10 @@ async def test_the_logbook_names_the_line_after_the_integrations_device(
     ]
 
 
-async def test_the_integrations_device_logbook_keeps_the_log_record_event(
+async def test_the_logbook_of_cores_lock_entity_keeps_the_log_record_event(
     hass: HomeAssistant, loaded_entry: MockConfigEntry, core_lock: er.RegistryEntry
 ) -> None:
-    """The logbook filtered to the integration's device keeps the log record event, and the logbook of core's lock device does not."""
+    """The logbook filtered to core's lock entity keeps the log record event, and the logbook of the integration's device does not."""
     external_events: dict[str, tuple[str, Callable[[Event], dict[str, Any]]]] = {}
     hass.data[LOGBOOK_DOMAIN] = LogbookConfig(external_events)
 
@@ -252,8 +252,8 @@ async def test_the_integrations_device_logbook_keeps_the_log_record_event(
     )
 
     assert EVENT_LOG_RECORD in async_determine_event_types(
-        hass, None, [activity_device(hass, loaded_entry).id]
+        hass, [core_lock.entity_id], None
     )
     assert EVENT_LOG_RECORD not in async_determine_event_types(
-        hass, None, [core_lock.device_id]
+        hass, None, [activity_device(hass, loaded_entry).id]
     )

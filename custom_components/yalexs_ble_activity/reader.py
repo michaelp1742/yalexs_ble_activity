@@ -8,8 +8,10 @@ from typing import TYPE_CHECKING, TypedDict
 from yalexs_ble import Brand, GetLogError, LogRead, LogRecord, parse_log_event_packet
 
 from homeassistant.components.event import ATTR_EVENT_TYPE
-from homeassistant.const import ATTR_DEVICE_ID, CONF_ADDRESS
+from homeassistant.components.lock import DOMAIN as LOCK_DOMAIN
+from homeassistant.const import ATTR_DEVICE_ID, ATTR_ENTITY_ID, CONF_ADDRESS
 from homeassistant.core import Context, HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -25,6 +27,7 @@ from .const import (
     DOMAIN,
     EVENT_LOG_RECORD,
     EVENT_TYPE_UNKNOWN_RECORD,
+    OWNER_DOMAIN,
 )
 from .models import LOCK_MODELS
 
@@ -197,12 +200,18 @@ class LogReader:
         data[ATTR_EVENT_TYPE] = activity.event_type
         if activity.source is not None:
             data[ATTR_SOURCE] = activity.source
+        event_data = {**data, ATTR_DEVICE_ID: self.device.id}
+        # The logbook finds the record for the lock entity by the entity_id in the
+        # event's data.
+        if (
+            lock_entity_id := er.async_get(self._hass).async_get_entity_id(
+                LOCK_DOMAIN, OWNER_DOMAIN, self._owner.runtime_data.lock.address
+            )
+        ) is not None:
+            event_data[ATTR_ENTITY_ID] = lock_entity_id
         context = Context()
         self._hass.bus.async_fire(
-            EVENT_LOG_RECORD,
-            {**data, ATTR_DEVICE_ID: self.device.id},
-            context=context,
-            time_fired=line_time,
+            EVENT_LOG_RECORD, event_data, context=context, time_fired=line_time
         )
         if self._entity is not None:
             self._entity.async_record(activity.event_type, data, context)

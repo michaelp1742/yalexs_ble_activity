@@ -13,7 +13,6 @@ from .const import (
     ATTR_NAME,
     ATTR_SLOT,
     ATTR_SOURCE,
-    DOMAIN,
     EVENT_LOG_RECORD,
     EVENT_TYPE_CODE_ADDED,
     EVENT_TYPE_CODE_ADDED_V2,
@@ -23,6 +22,7 @@ from .const import (
     EVENT_TYPE_CREDENTIAL_DELETED,
     EVENT_TYPE_WORDS,
     LOCK_STATE_WORDS,
+    OWNER_DOMAIN,
     SOURCE_MASTER_CODE,
 )
 
@@ -79,4 +79,6 @@ def async_describe_events(
             LOGBOOK_ENTRY_MESSAGE: message,
         }
 
-    async_describe_event(DOMAIN, EVENT_LOG_RECORD, async_describe_log_record)
+    # The logbook returns this event for the lock's entities only when it is described
+    # under the domain of their config entry.
+    async_describe_event(OWNER_DOMAIN, EVENT_LOG_RECORD, async_describe_log_record)

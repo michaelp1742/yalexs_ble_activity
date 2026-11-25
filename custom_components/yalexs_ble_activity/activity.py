@@ -41,7 +41,7 @@ from yalexs_ble import (
 )
 
 from homeassistant.components.event import ATTR_EVENT_TYPE
-from homeassistant.const import ATTR_DEVICE_ID
+from homeassistant.const import ATTR_DEVICE_ID, ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.integration_platform import (
     async_process_integration_platforms,
@@ -169,6 +169,7 @@ _EVENT_ATTRIBUTES = {
     ATTR_SOURCE,
     ATTR_NAME,
     ATTR_DEVICE_ID,
+    ATTR_ENTITY_ID,
 }
 
 
